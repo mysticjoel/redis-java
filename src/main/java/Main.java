@@ -1,4 +1,5 @@
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -18,6 +19,8 @@ public class Main {
             serverSocket.setReuseAddress(true);
             // Wait for connection from client.
             clientSocket = serverSocket.accept();
+            OutputStream outputStream = clientSocket.getOutputStream();
+            outputStream.write("+PONG\r\n".getBytes());
             //System.out.println("Welcome to CodeCrafters! Your commit was received successfully.");
         } catch (IOException e) {
             System.out.println("IOException: " + e.getMessage());

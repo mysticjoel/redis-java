@@ -1,7 +1,4 @@
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -42,10 +39,19 @@ class ClientHandler implements Runnable {
                 if (line.trim().equalsIgnoreCase("PING") || line.trim().endsWith("PING")) {
                     outputStream.write("+PONG\r\n".getBytes());
                 }
+                int index = line.indexOf("ECHO");
+                if(index!=-1){
+                    int endIndex = line.indexOf("ECHO")+6;
+                    String result = line.substring(endIndex);
+                    outputStream.write(result.getBytes());
+                }
+
+
+                }
                 // Optionally, handle other Redis-like commands here
-            }
-        } catch (IOException e) {
+            }catch (IOException e) {
             System.out.println("IOException in client handler: " + e.getMessage());
+            throw new RuntimeException(e);
         } finally {
             try {
                 clientSocket.close();

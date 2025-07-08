@@ -40,15 +40,25 @@ class ClientHandler implements Runnable {
                     outputStream.write("+PONG\r\n".getBytes());
                 }
                 int index = line.indexOf("ECHO");
-                if(index!=-1){
-                    int endIndex = line.indexOf("ECHO")+8;
+                if (index != -1) {
+                    int endIndex = index + 4; // Just after "ECHO"
+
+                    // Skip any \r\n or whitespace
+                    while (endIndex < line.length() &&
+                            (line.charAt(endIndex) == '\r' ||
+                                    line.charAt(endIndex) == '\n' ||
+                                    Character.isWhitespace(line.charAt(endIndex)))) {
+                        endIndex++;
+                    }
+
                     String result = line.substring(endIndex).trim();
                     System.out.println(result);
-                    outputStream.write(result.getBytes());
+                    outputStream.write(("$" + result.length() + "\r\n" + result + "\r\n").getBytes());
                 }
 
 
-                }
+
+            }
                 // Optionally, handle other Redis-like commands here
             }catch (IOException e) {
             System.out.println("IOException in client handler: " + e.getMessage());

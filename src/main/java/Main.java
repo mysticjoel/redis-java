@@ -24,7 +24,7 @@ public class Main {
                 byte[] input = new byte[1024];
                 clientSocket.getInputStream().read(input);
                 String inputString = new String(input).trim();
-                OutputStream outputStream = clientSocket.getOutputStream());
+                OutputStream outputStream = clientSocket.getOutputStream();
                 System.out.println("Received: " + inputString);
                 if (inputString.trim().equalsIgnoreCase("PING") || inputString.trim().endsWith("PING")) {
                     outputStream.write("+PONG\r\n".getBytes());

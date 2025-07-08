@@ -35,29 +35,18 @@ class ClientHandler implements Runnable {
         ) {
             String line;
             while ((line = reader.readLine()) != null) {
-                // Trim and check if the command is PING
-                if (line.trim().equalsIgnoreCase("PING") || line.trim().endsWith("PING")) {
+                if (line.trim().equalsIgnoreCase("PING")) {
                     outputStream.write("+PONG\r\n".getBytes());
-                }
-                int index = line.indexOf("ECHO");
-                if (index != -1) {
-                    int endIndex = index + 4; // Just after "ECHO"
-
-                    // Skip any \r\n or whitespace
-                    while (endIndex < line.length() &&
-                            (line.charAt(endIndex) == '\r' ||
-                                    line.charAt(endIndex) == '\n' ||
-                                    Character.isWhitespace(line.charAt(endIndex)))) {
-                        endIndex++;
-                    }
-
-                    String result = line.substring(endIndex).trim();
-                    System.out.println(result);
-                    outputStream.write(("$" + result.length() + "\r\n" + result + "\r\n").getBytes());
+                    continue;
                 }
 
-
-
+                if (line.trim().equalsIgnoreCase("ECHO")) {
+                    // Read next 2 lines for bulk string:
+                    reader.readLine(); // skip $length
+                    String value = reader.readLine(); // get the actual value
+                    String response = "$" + value.length() + "\r\n" + value + "\r\n";
+                    outputStream.write(response.getBytes());
+                }
             }
                 // Optionally, handle other Redis-like commands here
             }catch (IOException e) {

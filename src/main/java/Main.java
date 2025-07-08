@@ -1,56 +1,41 @@
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 public class Main {
+    public static void main(String[] args){
+        // You can use print statements as follows for debugging, they'll be visible when running tests.
+        System.out.println("Logs from your program will appear here!");
 
-    public static void main(String[] args) {
+        ServerSocket serverSocket = null;
+        Socket clientSocket = null;
         int port = 6379;
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
+        try {
+            serverSocket = new ServerSocket(port);
+            // Since the tester restarts your program quite often, setting SO_REUSEADDR
+            // ensures that we don't run into 'Address already in use' errors
             serverSocket.setReuseAddress(true);
-            System.out.println("Server listening on port " + port);
+            // Wait for connection from client.
+            clientSocket = serverSocket.accept();
 
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                // Handle each client in a new thread
-                new Thread(new ClientHandler(clientSocket)).start();
+                // Read input from client.
+                byte[] input = new byte[1024];
+                clientSocket.getInputStream().read(input);
+                String inputString = new String(input).trim();
+                System.out.println("Received: " + inputString);
+                clientSocket.getOutputStream().write("+PONG\r\n".getBytes());
             }
+
         } catch (IOException e) {
             System.out.println("IOException: " + e.getMessage());
-        }
-    }
-}
-
-class ClientHandler implements Runnable {
-    private Socket clientSocket;
-
-    public ClientHandler(Socket socket) {
-        this.clientSocket = socket;
-    }
-
-    public void run() {
-        try (
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                OutputStream outputStream = clientSocket.getOutputStream()
-        ) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                // Trim and check if the command is PING
-                if (line.trim().equalsIgnoreCase("PING") || line.trim().endsWith("PING")) {
-                    outputStream.write("+PONG\r\n".getBytes());
-                }
-                // Optionally, handle other Redis-like commands here
-            }
-        } catch (IOException e) {
-            System.out.println("IOException in client handler: " + e.getMessage());
         } finally {
             try {
-                clientSocket.close();
+                if (clientSocket != null) {
+                    clientSocket.close();
+                }
             } catch (IOException e) {
-                System.out.println("Failed to close client socket: " + e.getMessage());
+                System.out.println("IOException: " + e.getMessage());
             }
         }
     }

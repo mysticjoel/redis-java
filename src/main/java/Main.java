@@ -1,50 +1,57 @@
+import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 public class Main {
+
     public static void main(String[] args) {
         int port = 6379;
-
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setReuseAddress(true);
-            System.out.println("Server started. Listening on port " + port);
+            System.out.println("Server listening on port " + port);
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-
-                // Handle client in a new thread using lambda
-                new Thread(() -> {
-                    try (
-                            InputStream inputStream = clientSocket.getInputStream();
-                            OutputStream outputStream = clientSocket.getOutputStream()
-                    ) {
-                        byte[] buffer = new byte[1024];
-                        int read = inputStream.read(buffer);
-                        if (read > 0) {
-                            String input = new String(buffer, 0, read).trim();
-                            System.out.println("Received: " + input);
-
-                            if (input.contains("PING")) {
-                                outputStream.write("+PONG\r\n".getBytes());
-                            }
-                        }
-                    } catch (IOException e) {
-                        System.err.println("IOException in client thread: " + e.getMessage());
-                    } finally {
-                        try {
-                            clientSocket.close();
-                        } catch (IOException e) {
-                            System.err.println("Error closing socket: " + e.getMessage());
-                        }
-                    }
-                }).start();
+                // Handle each client in a new thread
+                new Thread(new ClientHandler(clientSocket)).start();
             }
-
         } catch (IOException e) {
-            System.err.println("IOException in main: " + e.getMessage());
+            System.out.println("IOException: " + e.getMessage());
+        }
+    }
+}
+
+class ClientHandler implements Runnable {
+    private Socket clientSocket;
+
+    public ClientHandler(Socket socket) {
+        this.clientSocket = socket;
+    }
+
+    public void run() {
+        try (
+                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                OutputStream outputStream = clientSocket.getOutputStream()
+        ) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Trim and check if the command is PING
+                if (line.trim().equalsIgnoreCase("PING") || line.trim().endsWith("PING")) {
+                    outputStream.write("+PONG\r\n".getBytes());
+                }
+                // Optionally, handle other Redis-like commands here
+            }
+        } catch (IOException e) {
+            System.out.println("IOException in client handler: " + e.getMessage());
+        } finally {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                System.out.println("Failed to close client socket: " + e.getMessage());
+            }
         }
     }
 }

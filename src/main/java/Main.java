@@ -41,8 +41,8 @@ class ClientHandler implements Runnable {
                 }
                 int index = line.indexOf("ECHO");
                 if(index!=-1){
-                    int endIndex = line.indexOf("ECHO")+6;
-                    String result = line.substring(endIndex);
+                    int endIndex = line.indexOf("ECHO")+8;
+                    String result = line.substring(endIndex).trim();
                     outputStream.write(result.getBytes());
                 }
 

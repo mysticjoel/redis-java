@@ -1,0 +1,83 @@
+import java.io.*;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.HashMap;
+
+public class Study{
+    public static void main(String[] args){
+        int port = 6379;
+        try(ServerSocket serversocket = new ServerSocket(port)){
+            serversocket.setReuseAddress(true);
+            //serversocket.accept(client)
+            System.out.println("Server listening on port " + port);
+            while(true){
+                Socket clientSocket = serversocket.accept();
+                new Thread(new ClientHandler(clientSocket)).start();
+            }
+        }catch (Exception e){
+            System.out.println("IOException: " + e.getMessage());
+        }
+        //Socket socket = null;
+    }
+
+    class ClientHandler implements Runnable{
+        private Socket clientSocket;
+        public ClientHandler(Socket socket) {
+            this.clientSocket = socket;
+        }
+
+        @Override
+        public void run(){
+            try(BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                OutputStream writer = clientSocket.getOutputStream()
+            ) {
+                String line;
+                HashMap<String,String> map = new HashMap<>();
+
+
+                while((line=reader.readLine())!= null){
+                    System.out.println(line);
+                    if(line.trim().equalsIgnoreCase("PING")){
+                        writer.write(("+PONG\r\n").getBytes());
+                        continue;
+                    }
+                    if(line.trim().equalsIgnoreCase("ECHO")){
+                        System.out.println(line);
+                        reader.readLine();
+                        String response = reader.readLine();
+                        System.out.println(response);
+                        String real = "$" + response.length() + "\r\n" + response + "\r\n";
+                        writer.write(real.getBytes());
+                    }
+                    if(line.trim().equalsIgnoreCase("SET")){
+                        System.out.println(line);
+                        reader.readLine();
+                        map.put(reader.readLine(),reader.readLine());
+                        System.out.println(map);
+                        writer.write(("+OK\r\n".getBytes()));
+                        continue;
+                    }
+                    if(line.trim().equalsIgnoreCase("GET")){
+                        System.out.println(line);
+                        reader.readLine();
+                        String response = reader.readLine();
+                        String value = map.get(response);
+                        String real = "$" + response.length() + "\r\n" + value + "\r\n";
+                        writer.write(real.getBytes());
+                        //continue;
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("IOException: " + e.getMessage());
+                throw new RuntimeException(e);
+            }finally {
+                try {
+                    clientSocket.close();
+                } catch (IOException e) {
+                    System.out.println("Failed to close client socket: " + e.getMessage());
+                }
+            }
+
+        }
+    }
+}

@@ -62,6 +62,7 @@ class ClientHandler implements Runnable {
                     reader.readLine();
                     String response = reader.readLine();
                     String value = map.get(response);
+                    System.out.println(value);
                     String real = "$" + response.length() + "\r\n" + value + "\r\n";
                     writer.write(real.getBytes());
                     //continue;

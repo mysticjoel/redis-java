@@ -6,7 +6,23 @@ import java.util.concurrent.*;
 
 public class Main {
 
+    static String dir = null;
+    static String dbfilename = null;
+
     public static void main(String[] args) {
+        // Parse command line args for --dir and --dbfilename
+        for (int i = 0; i < args.length; i++) {
+            if ("--dir".equals(args[i]) && i + 1 < args.length) {
+                dir = args[i + 1];
+                i++;
+            } else if ("--dbfilename".equals(args[i]) && i + 1 < args.length) {
+                dbfilename = args[i + 1];
+                i++;
+            }
+        }
+        System.out.println(dir);
+        System.out.println(dbfilename);
+
         int port = 6379;
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setReuseAddress(true);
@@ -14,7 +30,6 @@ public class Main {
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                // Handle each client in a new thread
                 new Thread(new ClientHandler(clientSocket)).start();
             }
         } catch (IOException e) {
@@ -22,6 +37,7 @@ public class Main {
         }
     }
 }
+
 
 
 class ClientHandler implements Runnable {
@@ -49,7 +65,6 @@ class ClientHandler implements Runnable {
                     writer.write("+PONG\r\n".getBytes());
                     continue;
                 }
-
                 if (line.trim().equalsIgnoreCase("ECHO")) {
                     // Read next 2 lines for bulk string:
                     reader.readLine(); // skip $length
@@ -57,6 +72,40 @@ class ClientHandler implements Runnable {
                     String response = "$" + value.length() + "\r\n" + value + "\r\n";
                     writer.write(response.getBytes());
                 }
+
+                if (line.trim().equalsIgnoreCase("CONFIG")) {
+                    // Expect next line: GET
+                    reader.readLine();
+                    String subCommand = reader.readLine();
+                    if (subCommand != null && subCommand.trim().equalsIgnoreCase("GET")) {
+                        reader.readLine(); // skip $length line for parameter name
+                        String param = reader.readLine(); // parameter name: e.g. "dir" or "dbfilename"
+
+                        String value = null;
+                        if ("dir".equalsIgnoreCase(param)) {
+                            value = Main.dir != null ? Main.dir : "";
+                        } else if ("dbfilename".equalsIgnoreCase(param)) {
+                            value = Main.dbfilename != null ? Main.dbfilename : "";
+                        } else {
+                            value = ""; // Unknown parameter - empty string response
+                        }
+
+                        // Prepare RESP array response of 2 bulk strings: param and value
+                        String response =
+                                "*2\r\n" +
+                                        "$" + param.length() + "\r\n" +
+                                        param + "\r\n" +
+                                        "$" + value.length() + "\r\n" +
+                                        value + "\r\n";
+
+                        writer.write(response.getBytes());
+                        writer.flush();
+                        //break;
+                        continue;
+                    }
+                }
+
+
                 if(line.trim().equalsIgnoreCase("SET")){
                     System.out.println(line);
                     reader.readLine();

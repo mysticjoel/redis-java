@@ -52,7 +52,10 @@ class ClientHandler implements Runnable {
                 if(line.trim().equalsIgnoreCase("SET")){
                     System.out.println(line);
                     reader.readLine();
-                    map.put(reader.readLine(),reader.readLine());
+                    String key = reader.readLine();
+                    reader.readLine();
+                    String value = reader.readLine();
+                    map.put(key,value);
                     System.out.println(map);
                     writer.write(("+OK\r\n".getBytes()));
                     continue;

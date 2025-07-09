@@ -2,10 +2,7 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.*;
 
 public class Main {
 
@@ -29,6 +26,11 @@ public class Main {
 
 class ClientHandler implements Runnable {
     private Socket clientSocket;
+    //private final HashMap<String, String> map = new HashMap<>();
+    private static final ConcurrentHashMap<String, String> map = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Long> expiryMap = new ConcurrentHashMap<>();
+
+    //private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -39,9 +41,9 @@ class ClientHandler implements Runnable {
                 OutputStream writer = clientSocket.getOutputStream()
         ) {
             String line;
-            HashMap<String,String> map = new HashMap<>();
-            long expirationTime = 0;
+            //HashMap<String,String> map = new HashMap<>();
             //ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+            //long expirationTime = 0;
             while ((line = reader.readLine()) != null) {
                 if (line.trim().equalsIgnoreCase("PING")) {
                     writer.write("+PONG\r\n".getBytes());
@@ -62,33 +64,54 @@ class ClientHandler implements Runnable {
                     reader.readLine();
                     String value = reader.readLine();
                     map.put(key,value);
+                    expiryMap.remove(key);
                     System.out.println(map);
+                    System.out.println(expiryMap);
                     writer.write(("+OK\r\n".getBytes()));
-                    try{
-                        line = reader.readLine();
-                        if(line.trim().equalsIgnoreCase("PX")){
-                            reader.readLine();
-                            int x = Integer.parseInt(reader.readLine());
-                            expirationTime = System.currentTimeMillis() + x;
+                    reader.mark(1000);
+                    String possibleDollarLine = reader.readLine(); // e.g., "$2"
+                    if (possibleDollarLine != null && possibleDollarLine.trim().equalsIgnoreCase("$2")) {
+                        String pxKeyword = reader.readLine(); // should be "px"
+                        if (pxKeyword != null && pxKeyword.trim().equalsIgnoreCase("px")) {
+                            reader.readLine(); // skip $length of px value
+                            String timeStr = reader.readLine();
+                            try {
+                                int time = Integer.parseInt(timeStr.trim());
+                                long expiryTime = System.currentTimeMillis() + time;
+                                expiryMap.put(key, expiryTime);
+                            } catch (NumberFormatException e) {
+                                System.out.println("Invalid PX value: " + timeStr);
+                            }
+                        } else {
+                            reader.reset(); // Not PX, rewind
                         }
-                    }catch (Exception e){
-                        writer.write(("$-1\r\n".getBytes()));
+                    } else {
+                        reader.reset(); // No PX at all, rewind
                     }
+
                     continue;
                 }
                 if(line.trim().equalsIgnoreCase("GET")){
-                    if(System.currentTimeMillis() <= expirationTime) {
-                        System.out.println(line);
-                        reader.readLine();
-                        String response = reader.readLine();
+                    System.out.println(line);
+                    reader.readLine();
+                    String response = reader.readLine();
+                    Long expiry = expiryMap.get(response);
+                    if(expiry != null && System.currentTimeMillis() > expiry){
+                        map.remove(response);
+                        expiryMap.remove(response);
+                        writer.write(("$-1\r\n".getBytes()));
+                        continue;
+                    }
+
+                    if(map.get(response)!= null){
                         String value = map.get(response);
                         System.out.println(value);
                         String real = "$" + value.length() + "\r\n" + value + "\r\n";
                         writer.write(real.getBytes());
+                    } else{
+                        writer.write("$-1\r\n".getBytes());
                     }
-                    else{
-                        writer.write(("$-1\r\n".getBytes()));
-                    }
+
                     //continue;
                 }
             }

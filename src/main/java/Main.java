@@ -2,6 +2,10 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 public class Main {
 
@@ -22,13 +26,13 @@ public class Main {
     }
 }
 
+
 class ClientHandler implements Runnable {
     private Socket clientSocket;
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
-
     public void run() {
         try (
                 BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
@@ -36,6 +40,8 @@ class ClientHandler implements Runnable {
         ) {
             String line;
             HashMap<String,String> map = new HashMap<>();
+            long expirationTime = 0;
+            //ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
             while ((line = reader.readLine()) != null) {
                 if (line.trim().equalsIgnoreCase("PING")) {
                     writer.write("+PONG\r\n".getBytes());
@@ -58,16 +64,31 @@ class ClientHandler implements Runnable {
                     map.put(key,value);
                     System.out.println(map);
                     writer.write(("+OK\r\n".getBytes()));
+                    try{
+                        line = reader.readLine();
+                        if(line.trim().equalsIgnoreCase("PX")){
+                            reader.readLine();
+                            int x = Integer.parseInt(reader.readLine());
+                            expirationTime = System.currentTimeMillis() + x;
+                        }
+                    }catch (Exception e){
+                        writer.write(("$-1\r\n".getBytes()));
+                    }
                     continue;
                 }
                 if(line.trim().equalsIgnoreCase("GET")){
-                    System.out.println(line);
-                    reader.readLine();
-                    String response = reader.readLine();
-                    String value = map.get(response);
-                    System.out.println(value);
-                    String real = "$" + value.length() + "\r\n" + value + "\r\n";
-                    writer.write(real.getBytes());
+                    if(System.currentTimeMillis() <= expirationTime) {
+                        System.out.println(line);
+                        reader.readLine();
+                        String response = reader.readLine();
+                        String value = map.get(response);
+                        System.out.println(value);
+                        String real = "$" + value.length() + "\r\n" + value + "\r\n";
+                        writer.write(real.getBytes());
+                    }
+                    else{
+                        writer.write(("$-1\r\n".getBytes()));
+                    }
                     //continue;
                 }
             }

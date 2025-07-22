@@ -161,6 +161,9 @@ public class ClientHandler implements Runnable {
                 if (line.trim().equalsIgnoreCase("REPLCONF")) {
                     writer.write("+OK\r\n".getBytes());
                 }
+                if (line.trim().equalsIgnoreCase("PSYNC")) {
+                    writer.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".getBytes());
+                }
             }
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());

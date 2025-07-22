@@ -30,6 +30,13 @@ public class Main {
             }
         }
 
+        //Handshake
+        if (masterhost != null && masterport != 0) {
+            Handshake handshake = new Handshake(masterhost, masterport);
+            handshake.start();
+        }
+
+
         // Load RDB file
         if (dir != null && dbfilename != null) {
             File rdbFile = new File(dir, dbfilename);

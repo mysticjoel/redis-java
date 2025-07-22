@@ -42,6 +42,11 @@ public class Handshake {
             // 6. Wait for +OK
             reader.readLine();
 
+            String psync1 = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
+            out.write(psync1.getBytes());
+            out.flush();
+            System.out.println(reader.readLine());
+
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

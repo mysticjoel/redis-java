@@ -27,7 +27,7 @@ public class Handshake {
             System.out.println("Received from master: " + response);
 
             // 3. Send REPLCONF listening-port <PORT>
-            String replconf1 = "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$\r\n" + Main.port + "\r\n";
+            String replconf1 = "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n" + Main.port + "\r\n";
             out.write(replconf1.getBytes());
             out.flush();
 

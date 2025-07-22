@@ -139,13 +139,18 @@ public class ClientHandler implements Runnable {
                     String section = reader.readLine();
 
                     if("replication".equalsIgnoreCase(section)) {
-                        String info = null;
+                        StringBuilder info = null;
                         System.out.println(Main.masterport);
                         if(Main.master != null) {
-                            info = "role:slave";
+                            info = new StringBuilder("role:slave");
                         } else{
-                            info = "role:master";
+                            info = new StringBuilder("role:master");
                         }
+                        info.append("\r\n");
+                        info.append("master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb");
+                        info.append("\r\n");
+                        info.append("master_repl_offset:0");
+                        info.append("\r\n");
                         String response = "$" + info.length() + "\r\n" + info + "\r\n";
                         writer.write(response.getBytes());
                     } else{

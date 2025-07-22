@@ -158,6 +158,9 @@ public class ClientHandler implements Runnable {
                     }
                     continue;
                 }
+                if (line.trim().equalsIgnoreCase("REPLCONF")) {
+                    writer.write("+OK\r\n".getBytes());
+                }
             }
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());

@@ -1,12 +1,15 @@
 import java.io.*;
 import java.net.Socket;
+import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientHandler implements Runnable {
     private final Socket clientSocket;
     public static final ConcurrentHashMap<String, String> map = new ConcurrentHashMap<>();
     public static final ConcurrentHashMap<String, Long> expiryMap = new ConcurrentHashMap<>();
-
+    byte[] emptyRDB = Base64.getDecoder().decode(
+            "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
+    );
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
@@ -163,6 +166,10 @@ public class ClientHandler implements Runnable {
                 }
                 if (line.trim().equalsIgnoreCase("PSYNC")) {
                     writer.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".getBytes());
+                    writer.write(("$" + emptyRDB.length + "\r\n").getBytes());
+                    writer.write(emptyRDB);
+                    writer.flush();
+
                 }
             }
         } catch (IOException e) {

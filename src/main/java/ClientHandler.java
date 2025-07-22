@@ -134,6 +134,19 @@ public class ClientHandler implements Runnable {
                     }
                     continue;
                 }
+                if (line.trim().equalsIgnoreCase("INFO")) {
+                    reader.readLine();
+                    String section = reader.readLine();
+
+                    if("replication".equalsIgnoreCase(section)) {
+                        String info = "role:master";
+                        String response = "$" + info.length() + "\r\n" + info + "\r\n";
+                        writer.write(response.getBytes());
+                    } else{
+                        writer.write("$-1\r\n".getBytes());
+                    }
+                    continue;
+                }
             }
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());

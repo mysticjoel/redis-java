@@ -7,6 +7,9 @@ public class Main {
     static String dir = null;
     static String dbfilename = null;
     static int port = 6379;
+    static String master = null;
+    static String masterhost = null;
+    static int masterport = 0;
 
     public static void main(String[] args) {
         // Parse command-line arguments
@@ -19,6 +22,11 @@ public class Main {
                 i++;
             } else if("--port".equals(args[i]) && i + 1 < args.length) {
                 port = Integer.parseInt(args[i + 1]);
+            } else if ("--replicaof".equals(args[i]) && i + 1 < args.length) {
+                master = args[i + 1];
+                String[] parts = master.split(" ");
+                masterhost = parts[0];
+                masterport = Integer.parseInt(parts[1]);
             }
         }
 

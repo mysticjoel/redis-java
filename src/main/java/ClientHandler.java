@@ -139,7 +139,13 @@ public class ClientHandler implements Runnable {
                     String section = reader.readLine();
 
                     if("replication".equalsIgnoreCase(section)) {
-                        String info = "role:master";
+                        String info = null;
+                        System.out.println(Main.masterport);
+                        if(Main.master != null) {
+                            info = "role:slave";
+                        } else{
+                            info = "role:master";
+                        }
                         String response = "$" + info.length() + "\r\n" + info + "\r\n";
                         writer.write(response.getBytes());
                     } else{

@@ -1,0 +1,213 @@
+import java.io.*;
+import java.net.Socket;
+import java.util.Base64;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class ClientHandler implements Runnable {
+    private final Socket clientSocket;
+    public static final ConcurrentHashMap<String, String> map = new ConcurrentHashMap<>();
+    public static final ConcurrentHashMap<String, Long> expiryMap = new ConcurrentHashMap<>();
+    byte[] emptyRDB = Base64.getDecoder().decode(
+            "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
+    );
+    public ClientHandler(Socket socket) {
+        this.clientSocket = socket;
+    }
+
+    private boolean isWriteCommand(String command) {
+        return command != null && Set.of("SET", "DEL").contains(command.toUpperCase());
+    }
+
+    public void propagateToReplicas(String[] commandParts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("*").append(commandParts.length).append("\r\n");
+        for (String part : commandParts) {
+            sb.append("$").append(part.length()).append("\r\n").append(part).append("\r\n");
+        }
+
+        byte[] payload = sb.toString().getBytes();
+        for (OutputStream out : Main.replicaOutputStreams) {
+            try {
+                out.write(payload);
+                out.flush();
+            } catch (IOException e) {
+                // Log or ignore
+            }
+        }
+    }
+    private String parseCommand(BufferedReader reader) throws IOException {
+        reader.readLine(); // $<length>
+        return reader.readLine().trim().toUpperCase();
+    }
+    private String[] readRespArray(BufferedReader reader, String firstLine) throws IOException {
+        int argCount = Integer.parseInt(firstLine.substring(1));
+        String[] commandParts = new String[argCount];
+        for (int i = 0; i < argCount; i++) {
+            reader.readLine(); // discard $length
+            commandParts[i] = reader.readLine();
+        }
+        return commandParts;
+    }
+
+    @Override
+    public void run() {
+        try (
+                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                OutputStream writer = clientSocket.getOutputStream()
+        ) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String command = line.startsWith("*") ? parseCommand(reader) : line.trim().toUpperCase();
+
+                switch (command) {
+                    case "PING" -> {
+                        writer.write("+PONG\r\n".getBytes());
+                    }
+
+                    case "ECHO" -> {
+                        reader.readLine(); // $<length>
+                        String value = reader.readLine();
+                        writer.write(("$" + value.length() + "\r\n" + value + "\r\n").getBytes());
+                    }
+
+                    case "CONFIG" -> {
+                        reader.readLine(); // $<length of GET>
+                        String subCmd = reader.readLine(); // GET
+                        reader.readLine(); // $<length of param>
+                        String param = reader.readLine();
+
+                        String value = switch (param.toLowerCase()) {
+                            case "dir" -> Main.dir;
+                            case "dbfilename" -> Main.dbfilename;
+                            default -> "";
+                        };
+
+                        String response = "*2\r\n" +
+                                "$" + param.length() + "\r\n" + param + "\r\n" +
+                                "$" + value.length() + "\r\n" + value + "\r\n";
+                        writer.write(response.getBytes());
+                    }
+
+                    case "SET" -> {
+                        reader.readLine(); // $<key length>
+                        String key = reader.readLine();
+                        reader.readLine(); // $<val length>
+                        String value = reader.readLine();
+                        map.put(key, value);
+                        expiryMap.remove(key);
+                        writer.write("+OK\r\n".getBytes());
+
+                        if (reader.ready()) {
+                            reader.mark(1000);
+                            String dollar = reader.readLine();
+                            if ("$2".equalsIgnoreCase(dollar)) {
+                                String next = reader.readLine();
+                                if ("px".equalsIgnoreCase(next)) {
+                                    reader.readLine(); // $<length>
+                                    String millis = reader.readLine();
+                                    try {
+                                        expiryMap.put(key, System.currentTimeMillis() + Long.parseLong(millis));
+                                    } catch (NumberFormatException ignored) {}
+                                } else {
+                                    reader.reset();
+                                }
+                            } else {
+                                reader.reset();
+                            }
+                        }
+
+                        if (isWriteCommand("SET")) {
+                            propagateToReplicas(new String[]{"SET", key, value});
+                        }
+                    }
+
+                    case "GET" -> {
+                        reader.readLine(); // $<key length>
+                        String key = reader.readLine();
+                        Long expiry = expiryMap.get(key);
+                        if (expiry != null && System.currentTimeMillis() > expiry) {
+                            map.remove(key);
+                            expiryMap.remove(key);
+                            writer.write("$-1\r\n".getBytes());
+                            continue;
+                        }
+                        String value = map.get(key);
+                        if (value != null) {
+                            writer.write(("$" + value.length() + "\r\n" + value + "\r\n").getBytes());
+                        } else {
+                            writer.write("$-1\r\n".getBytes());
+                        }
+                    }
+
+                    case "KEYS" -> {
+                        reader.readLine(); // $<length>
+                        String pattern = reader.readLine();
+
+                        long now = System.currentTimeMillis();
+                        map.keySet().removeIf(k -> expiryMap.containsKey(k) && now > expiryMap.get(k));
+
+                        if ("*".equals(pattern)) {
+                            StringBuilder response = new StringBuilder("*" + map.size() + "\r\n");
+                            for (String key : map.keySet()) {
+                                response.append("$").append(key.length()).append("\r\n").append(key).append("\r\n");
+                            }
+                            writer.write(response.toString().getBytes());
+                        } else {
+                            writer.write("*0\r\n".getBytes());
+                        }
+                    }
+
+                    case "INFO" -> {
+                        reader.readLine(); // $<length>
+                        String section = reader.readLine();
+                        if ("replication".equalsIgnoreCase(section)) {
+                            StringBuilder info = new StringBuilder();
+                            if (Main.master != null) {
+                                info.append("role:slave\r\n");
+                            } else {
+                                info.append("role:master\r\n");
+                            }
+                            info.append("master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n");
+                            info.append("master_repl_offset:0\r\n");
+                            writer.write(("$" + info.length() + "\r\n" + info + "\r\n").getBytes());
+                        } else {
+                            writer.write("$-1\r\n".getBytes());
+                        }
+                    }
+
+                    case "REPLCONF" -> {
+                        reader.readLine(); // $<length of subcommand>
+                        String subCommand = reader.readLine(); // e.g. "listening-port" or "capa"
+                        reader.readLine(); // $<length of value>
+                        String value = reader.readLine(); // e.g. "6380" or "psync2"
+                        System.out.println("REPLCONF " + subCommand + " " + value);
+                        writer.write("+OK\r\n".getBytes());
+                    }
+
+
+                    case "PSYNC" -> {
+                        writer.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".getBytes());
+                        writer.write(("$" + emptyRDB.length + "\r\n").getBytes());
+                        writer.write(emptyRDB);
+                        Main.replicaOutputStreams.add(clientSocket.getOutputStream());
+                        writer.flush();
+                    }
+
+                    default -> {
+                        writer.write(("-ERR unknown command '" + command + "'\r\n").getBytes());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Client error: " + e.getMessage());
+        } finally {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                System.err.println("Socket close failed: " + e.getMessage());
+            }
+        }
+    }
+
+}

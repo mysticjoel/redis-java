@@ -12,6 +12,7 @@ public class Handshake {
 
     public void start() {
         try (Socket socket = new Socket(masterHost, masterPort)) {
+            //Main.replicaSocket = socket;
             OutputStream out = socket.getOutputStream();
             InputStream in = socket.getInputStream();
             BufferedReader reader = new BufferedReader(new InputStreamReader(in));

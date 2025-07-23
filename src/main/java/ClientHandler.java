@@ -14,6 +14,24 @@ public class ClientHandler implements Runnable {
         this.clientSocket = socket;
     }
 
+    public void propagateToReplicas(String[] commandParts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("*").append(commandParts.length).append("\r\n");
+        for (String part : commandParts) {
+            sb.append("$").append(part.length()).append("\r\n").append(part).append("\r\n");
+        }
+
+        byte[] payload = sb.toString().getBytes();
+        for (OutputStream out : Main.replicaOutputStreams) {
+            try {
+                out.write(payload);
+                out.flush();
+            } catch (IOException e) {
+                // Log or ignore
+            }
+        }
+    }
+
     @Override
     public void run() {
         try (
@@ -38,7 +56,7 @@ public class ClientHandler implements Runnable {
 
                 if (line.trim().equalsIgnoreCase("CONFIG")) {
                     reader.readLine(); // $3
-                    String subCommand = reader.readLine(); // GET
+                    reader.readLine(); // GET
                     reader.readLine(); // $length
                     String param = reader.readLine();
 
@@ -54,33 +72,46 @@ public class ClientHandler implements Runnable {
                 }
 
                 if (line.trim().equalsIgnoreCase("SET")) {
-                    reader.readLine(); // $length
+                    reader.readLine(); // $<key_length>
                     String key = reader.readLine();
-                    reader.readLine(); // $length
+                    reader.readLine(); // $<value_length>
                     String value = reader.readLine();
                     map.put(key, value);
                     expiryMap.remove(key);
                     writer.write("+OK\r\n".getBytes());
 
-                    // Optional PX expiration
-                    reader.mark(1000);
-                    String maybeDollar = reader.readLine();
-                    if ("$2".equalsIgnoreCase(maybeDollar)) {
-                        String keyword = reader.readLine(); // px
-                        if ("px".equalsIgnoreCase(keyword)) {
-                            reader.readLine(); // $length
-                            String millisStr = reader.readLine();
-                            try {
-                                long expireAt = System.currentTimeMillis() + Long.parseLong(millisStr);
-                                expiryMap.put(key, expireAt);
-                            } catch (NumberFormatException ignored) {
+                    // 🛠️ Safe PX handling
+                    if (reader.ready()) {
+                        reader.mark(1000); // mark before checking PX
+                        String maybeDollar = reader.readLine();
+                        if ("$2".equalsIgnoreCase(maybeDollar)) {
+                            String keyword = reader.readLine(); // e.g., "px"
+                            if ("px".equalsIgnoreCase(keyword)) {
+                                reader.readLine(); // $<length of milliseconds>
+                                String millisStr = reader.readLine();
+                                try {
+                                    long expireAt = System.currentTimeMillis() + Long.parseLong(millisStr);
+                                    expiryMap.put(key, expireAt);
+                                } catch (NumberFormatException ignored) {
+                                }
+                            } else {
+                                reader.reset(); // rollback if not PX
                             }
                         } else {
-                            reader.reset();
+                            reader.reset(); // rollback if not $2
                         }
-                    } else {
-                        reader.reset();
                     }
+                    propagateToReplicas(new String[]{"SET", key, value});
+                    continue;
+                }
+
+                if (line.trim().equalsIgnoreCase("DEL")) {
+                    reader.readLine();
+                    String key = reader.readLine();
+                    map.remove(key);
+                    expiryMap.remove(key);
+                    writer.write(":1\r\n".getBytes());
+                    propagateToReplicas(new String[]{"DEL", key});
                     continue;
                 }
 
@@ -137,12 +168,13 @@ public class ClientHandler implements Runnable {
                     }
                     continue;
                 }
+
                 if (line.trim().equalsIgnoreCase("INFO")) {
                     reader.readLine();
                     String section = reader.readLine();
 
                     if("replication".equalsIgnoreCase(section)) {
-                        StringBuilder info = null;
+                        StringBuilder info;
                         System.out.println(Main.masterport);
                         if(Main.master != null) {
                             info = new StringBuilder("role:slave");
@@ -161,15 +193,19 @@ public class ClientHandler implements Runnable {
                     }
                     continue;
                 }
+
                 if (line.trim().equalsIgnoreCase("REPLCONF")) {
                     writer.write("+OK\r\n".getBytes());
+                    continue;
                 }
+
                 if (line.trim().equalsIgnoreCase("PSYNC")) {
                     writer.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".getBytes());
                     writer.write(("$" + emptyRDB.length + "\r\n").getBytes());
                     writer.write(emptyRDB);
+                    Main.replicaOutputStreams.add(clientSocket.getOutputStream());
                     writer.flush();
-
+                    continue;
                 }
             }
         } catch (IOException e) {

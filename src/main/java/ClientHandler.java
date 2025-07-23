@@ -10,6 +10,7 @@ public class ClientHandler implements Runnable {
     byte[] emptyRDB = Base64.getDecoder().decode(
             "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
     );
+
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
@@ -27,7 +28,7 @@ public class ClientHandler implements Runnable {
                 out.write(payload);
                 out.flush();
             } catch (IOException e) {
-                // Log or ignore
+                // Ignore or log
             }
         }
     }
@@ -40,7 +41,6 @@ public class ClientHandler implements Runnable {
         ) {
             String line;
             while ((line = reader.readLine()) != null) {
-
                 if (line.trim().equalsIgnoreCase("PING")) {
                     writer.write("+PONG\r\n".getBytes());
                     continue;
@@ -80,7 +80,7 @@ public class ClientHandler implements Runnable {
                     expiryMap.remove(key);
                     writer.write("+OK\r\n".getBytes());
 
-                    // 🛠️ Safe PX handling
+                    // Handle PX option (expiration)
                     if (reader.ready()) {
                         reader.mark(1000); // mark before checking PX
                         String maybeDollar = reader.readLine();
@@ -173,12 +173,11 @@ public class ClientHandler implements Runnable {
                     reader.readLine();
                     String section = reader.readLine();
 
-                    if("replication".equalsIgnoreCase(section)) {
+                    if ("replication".equalsIgnoreCase(section)) {
                         StringBuilder info;
-                        System.out.println(Main.masterport);
-                        if(Main.master != null) {
+                        if (Main.master != null) {
                             info = new StringBuilder("role:slave");
-                        } else{
+                        } else {
                             info = new StringBuilder("role:master");
                         }
                         info.append("\r\n");
@@ -188,7 +187,7 @@ public class ClientHandler implements Runnable {
                         info.append("\r\n");
                         String response = "$" + info.length() + "\r\n" + info + "\r\n";
                         writer.write(response.getBytes());
-                    } else{
+                    } else {
                         writer.write("$-1\r\n".getBytes());
                     }
                     continue;

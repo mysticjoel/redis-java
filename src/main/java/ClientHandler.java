@@ -206,6 +206,16 @@ public class ClientHandler implements Runnable {
                     writer.flush();
                     continue;
                 }
+
+                if(line.trim().equalsIgnoreCase("WAIT")) {
+                    reader.readLine();
+                    reader.readLine(); // 0
+                    reader.readLine(); // $5
+                    reader.readLine(); // 60000
+                    writer.write(":0\r\n".getBytes());
+                    writer.flush();
+                    continue;
+                }
             }
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());

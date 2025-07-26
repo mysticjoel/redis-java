@@ -125,7 +125,7 @@ public class Handshake {
                             }
                             parts[i] = value;
                         }
-                        processPropagatedCommand(parts);
+                        processPropagatedCommand(parts,out);
                     } catch (Exception e) {
                         System.err.println("Error processing propagated command: " + e.getMessage());
                         e.printStackTrace();
@@ -167,7 +167,7 @@ public class Handshake {
         }
     }
 
-    private void processPropagatedCommand(String[] parts) {
+    private void processPropagatedCommand(String[] parts, OutputStream out) throws IOException {
         if (parts.length == 0) return;
         String command = parts[0].toUpperCase();
         switch (command) {
@@ -187,6 +187,17 @@ public class Handshake {
                     System.out.println("Processed propagated DEL: " + parts[1]);
                 } else {
                     System.err.println("Invalid DEL command: " + String.join(" ", parts));
+                }
+                break;
+            case "REPLCONF":
+                if (parts.length >= 3 && parts[1].equalsIgnoreCase("getack") && parts[2].equals("*")) {
+                    // Respond with *3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n
+                    String response = "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n";
+                    out.write(response.getBytes());
+                    out.flush();
+                    System.out.println("Sent REPLCONF ACK 0 to master");
+                } else {
+                    System.out.println("Unsupported REPLCONF command: " + String.join(" ", parts));
                 }
                 break;
             default:

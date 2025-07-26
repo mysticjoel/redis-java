@@ -212,7 +212,9 @@ public class ClientHandler implements Runnable {
                     reader.readLine(); // 0
                     reader.readLine(); // $5
                     reader.readLine(); // 60000
-                    writer.write(":0\r\n".getBytes());
+                    int size = Main.replicaOutputStreams.size();
+                    String response = ":"+size+"\r\n";
+                    writer.write(response.getBytes());
                     writer.flush();
                     continue;
                 }

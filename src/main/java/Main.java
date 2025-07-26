@@ -1,70 +1,67 @@
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
 
 public class Main {
-    static String dir = null;
-    static String dbfilename = null;
-    static int port = 6379;
-    static String master = null;
-    static String masterhost = null;
-    static int masterport = 0;
-    public static final Set<OutputStream> replicaOutputStreams = ConcurrentHashMap.newKeySet();
+    public static String dir = "";
+    public static String dbfilename = "";
+    public static String master = null;
+    public static long masterOffset = 0;
+    public static final Map<Integer, ReplicaConnection> replicaConnections = Collections.synchronizedMap(new HashMap<>());
 
-    public static void main(String[] args) {
-        // Parse command-line arguments
+    public static class ReplicaConnection {
+        public final Socket socket;
+        public final OutputStream outputStream;
+        public final BufferedReader inputStream;
+        public final int port;
+
+        public ReplicaConnection(Socket socket, int port) throws IOException {
+            this.socket = socket;
+            this.port = port;
+            this.outputStream = socket.getOutputStream();
+            this.inputStream = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        }
+    }
+
+    public static void main(String[] args) throws IOException {
+        int port = 6379;
+        String masterHost = null;
+        int masterPort = 0;
+
+        // Parse arguments
         for (int i = 0; i < args.length; i++) {
-            if ("--dir".equals(args[i]) && i + 1 < args.length) {
-                dir = args[i + 1];
-                i++;
-            } else if ("--dbfilename".equals(args[i]) && i + 1 < args.length) {
-                dbfilename = args[i + 1];
-                i++;
-            } else if ("--port".equals(args[i]) && i + 1 < args.length) {
-                port = Integer.parseInt(args[i + 1]);
-                i++;
-            } else if ("--replicaof".equals(args[i]) && i + 1 < args.length) {
-                master = args[i + 1];
-                String[] parts = master.split(" ");
-                masterhost = parts[0];
-                masterport = Integer.parseInt(parts[1]);
-                i++;
+            if (args[i].equals("--port")) {
+                port = Integer.parseInt(args[++i]);
+            } else if (args[i].equals("--replicaof")) {
+                masterHost = args[++i];
+                masterPort = Integer.parseInt(args[++i]);
+                master = masterHost + ":" + masterPort;
+            } else if (args[i].equals("--dir")) {
+                dir = args[++i];
+            } else if (args[i].equals("--dbfilename")) {
+                dbfilename = args[++i];
             }
         }
 
-        // Start handshake in a separate thread
-        if (masterhost != null && masterport != 0) {
-            new Thread(() -> {
-                Handshake handshake = new Handshake(masterhost, masterport);
-                handshake.start();
-            }).start();
+        // Start server
+        ServerSocket serverSocket = new ServerSocket(port);
+        System.out.println("Server started on port " + port);
+        ExecutorService executor = Executors.newCachedThreadPool();
+
+        // Start handshake for replica
+        if (master != null) {
+            System.out.println("Starting handshake for replica on port " + port + " to master " + master);
+            Handshake handshake = new Handshake(masterHost, masterPort, port);
+            new Thread(handshake).start();
         }
 
-        // Load RDB file
-        if (dir != null && dbfilename != null) {
-            File rdbFile = new File(dir, dbfilename);
-            if (rdbFile.exists()) {
-                try {
-                    RDBParser.load(rdbFile);
-                } catch (IOException e) {
-                    System.err.println("Error loading RDB file: " + e.getMessage());
-                }
-            }
-        }
-
-        // Start Redis-like server
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
-            serverSocket.setReuseAddress(true);
-            System.out.println("Server listening on port " + port);
-
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                new Thread(new ClientHandler(clientSocket)).start();
-            }
-        } catch (IOException e) {
-            System.err.println("IOException: " + e.getMessage());
+        // Accept client connections
+        while (true) {
+            Socket clientSocket = serverSocket.accept();
+            System.out.println("Accepted client connection on port " + port);
+            ClientHandler clientHandler = new ClientHandler(clientSocket);
+            executor.submit(clientHandler);
         }
     }
 }

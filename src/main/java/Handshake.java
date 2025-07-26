@@ -4,6 +4,7 @@ import java.net.Socket;
 public class Handshake {
     private final String masterHost;
     private final int masterPort;
+    private long offset = 0;
 
     public Handshake(String masterHost, int masterPort) {
         this.masterHost = masterHost;
@@ -110,6 +111,8 @@ public class Handshake {
                             continue;
                         }
                         String[] parts = new String[numParts];
+                        StringBuilder resp = new StringBuilder();
+                        resp.append("*").append(numParts).append("\r\n");
                         for (int i = 0; i < numParts; i++) {
                             String lengthLine = readLine(in);
                             if (lengthLine == null || !lengthLine.startsWith("$")) {
@@ -123,9 +126,11 @@ public class Handshake {
                             if (value == null || value.length() != length) {
                                 throw new IOException("Invalid bulk string data for length: " + length);
                             }
+                            resp.append(lengthLine).append("\r\n").append(value).append("\r\n");
                             parts[i] = value;
                         }
-                        processPropagatedCommand(parts,out);
+                        //offset += resp.toString().getBytes().length;
+                        processPropagatedCommand(parts,out,resp.toString());
                     } catch (Exception e) {
                         System.err.println("Error processing propagated command: " + e.getMessage());
                         e.printStackTrace();
@@ -167,11 +172,12 @@ public class Handshake {
         }
     }
 
-    private void processPropagatedCommand(String[] parts, OutputStream out) throws IOException {
+    private void processPropagatedCommand(String[] parts, OutputStream out, String resp) throws IOException {
         if (parts.length == 0) return;
         String command = parts[0].toUpperCase();
         switch (command) {
             case "SET":
+                offset += resp.getBytes().length;
                 if (parts.length >= 3) {
                     ClientHandler.map.put(parts[1], parts[2]);
                     ClientHandler.expiryMap.remove(parts[1]);
@@ -181,6 +187,7 @@ public class Handshake {
                 }
                 break;
             case "DEL":
+                offset += resp.getBytes().length;
                 if (parts.length >= 2) {
                     ClientHandler.map.remove(parts[1]);
                     ClientHandler.expiryMap.remove(parts[1]);
@@ -189,18 +196,26 @@ public class Handshake {
                     System.err.println("Invalid DEL command: " + String.join(" ", parts));
                 }
                 break;
+            case "PING":
+                offset += resp.getBytes().length;
+                System.out.println("Processed propagated PING");
+                break;
             case "REPLCONF":
                 if (parts.length >= 3 && parts[1].equalsIgnoreCase("getack") && parts[2].equals("*")) {
                     // Respond with *3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n
-                    String response = "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n";
+                    String offsetStr = String.valueOf(offset);
+                    String response = "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + offsetStr.length() + "\r\n" + offsetStr + "\r\n";
                     out.write(response.getBytes());
                     out.flush();
-                    System.out.println("Sent REPLCONF ACK 0 to master");
+                    System.out.println("Sent REPLCONF ACK " + offset + " to master");
+                    offset += resp.getBytes().length;
                 } else {
+                    offset += resp.getBytes().length;
                     System.out.println("Unsupported REPLCONF command: " + String.join(" ", parts));
                 }
                 break;
             default:
+                offset += resp.getBytes().length;
                 System.out.println("Unsupported propagated command: " + command);
                 break;
         }

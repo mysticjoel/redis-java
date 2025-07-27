@@ -24,8 +24,10 @@ public class ListStore {
         if (list.isEmpty()) {
             return new ArrayList<>();
         }
+        int adjustedStart = start < 0 ? list.size() + start : start;
         int adjustedStop = stop < 0 ? list.size() + stop : Math.min(stop, list.size() - 1);
-        int adjustedStart = Math.max(start, 0);
+        adjustedStart = Math.max(adjustedStart, 0);
+        adjustedStop = Math.max(adjustedStop, -1);
         if (adjustedStart > adjustedStop || adjustedStart >= list.size()) {
             return new ArrayList<>();
         }

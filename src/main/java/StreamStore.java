@@ -104,13 +104,25 @@ public class StreamStore {
     public Map<String, List<StreamEntry>> read(List<String> keys, List<String> startIds, long blockMs) {
         Map<String, List<StreamEntry>> result = new LinkedHashMap<>(); // Preserve key order
         long deadline = blockMs > 0 ? System.currentTimeMillis() + blockMs : Long.MAX_VALUE;
+        // Map to store the effective startId for each key when $ is used
+        Map<String, String> effectiveStartIds = new HashMap<>();
+
+        // Determine the effective startId for each key
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i);
+            String startId = startIds.get(i);
+            if (startId.equals("$")) {
+                List<StreamEntry> stream = streams.getOrDefault(key, new ArrayList<>());
+                startId = stream.isEmpty() ? "0-0" : stream.get(stream.size() - 1).id;
+            }
+            effectiveStartIds.put(key, startId);
+        }
 
         while (true) {
             result.clear(); // Clear previous results to avoid stale data
             boolean hasEntries = false;
-            for (int i = 0; i < keys.size(); i++) {
-                String key = keys.get(i);
-                String startId = startIds.get(i);
+            for (String key : keys) {
+                String startId = effectiveStartIds.get(key);
                 List<StreamEntry> stream = streams.getOrDefault(key, new ArrayList<>());
                 List<StreamEntry> entries = new ArrayList<>();
                 for (StreamEntry entry : stream) {

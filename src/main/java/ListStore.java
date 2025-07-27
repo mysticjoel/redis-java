@@ -1,20 +1,48 @@
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class ListStore {
     private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
+    private final Map<String, BlockingQueue<List<String>>> blockedClients = new ConcurrentHashMap<>();
 
     public int rpush(String key, List<String> values) {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
-        list.addAll(values);
+        synchronized (list) {
+            list.addAll(values);
+            // Notify blocked clients
+            BlockingQueue<List<String>> queue = blockedClients.get(key);
+            if (queue != null && !list.isEmpty()) {
+                List<String> result = new ArrayList<>();
+                result.add(key);
+                result.add(list.remove(0));
+                queue.offer(result);
+                if (list.isEmpty()) {
+                    lists.remove(key);
+                }
+            }
+        }
         return list.size();
     }
 
     public int lpush(String key, List<String> values) {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
-        // Prepend values in the order they are provided
-        for (String value : values) {
-            list.add(0, value);
+        synchronized (list) {
+            for (String value : values) {
+                list.add(0, value);
+            }
+            // Notify blocked clients
+            BlockingQueue<List<String>> queue = blockedClients.get(key);
+            if (queue != null && !list.isEmpty()) {
+                List<String> result = new ArrayList<>();
+                result.add(key);
+                result.add(list.remove(0));
+                queue.offer(result);
+                if (list.isEmpty()) {
+                    lists.remove(key);
+                }
+            }
         }
         return list.size();
     }
@@ -45,32 +73,45 @@ public class ListStore {
         }
         List<String> result = new ArrayList<>();
         count = Math.min(count, list.size());
-        for (int i = 0; i < count; i++) {
-            result.add(list.remove(0));
-        }
-        if (list.isEmpty()) {
-            lists.remove(key);
+        synchronized (list) {
+            for (int i = 0; i < count; i++) {
+                result.add(list.remove(0));
+            }
+            if (list.isEmpty()) {
+                lists.remove(key);
+            }
         }
         return result;
     }
 
     public List<String> blpop(String key, long timeoutMs) {
         List<String> list = lists.getOrDefault(key, new ArrayList<>());
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (list.isEmpty() && System.currentTimeMillis() < deadline) {
-            try {
-                Thread.sleep(10);
-            } catch (InterruptedException ignored) {}
-            list = lists.getOrDefault(key, new ArrayList<>());
+        BlockingQueue<List<String>> queue = blockedClients.computeIfAbsent(key, k -> new LinkedBlockingQueue<>());
+
+        synchronized (list) {
+            if (!list.isEmpty()) {
+                List<String> result = new ArrayList<>();
+                result.add(key);
+                result.add(list.remove(0));
+                if (list.isEmpty()) {
+                    lists.remove(key);
+                    blockedClients.remove(key);
+                }
+                return result;
+            }
         }
-        if (list.isEmpty()) {
+
+        try {
+            List<String> result = timeoutMs == 0 ? queue.take() : queue.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (result == null) {
+                blockedClients.remove(key, queue);
+                return null;
+            }
+            return result;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            blockedClients.remove(key, queue);
             return null;
         }
-        List<String> result = new ArrayList<>();
-        result.add(list.remove(0));
-        if (list.isEmpty()) {
-            lists.remove(key);
-        }
-        return result;
     }
 }

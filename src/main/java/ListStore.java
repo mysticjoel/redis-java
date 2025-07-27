@@ -3,7 +3,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class ListStore {
+public class class ListStore {
     private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
     private final Map<String, BlockingQueue<Runnable>> blockedClients = new ConcurrentHashMap<>();
 
@@ -15,7 +15,7 @@ public class ListStore {
             System.out.println("RPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<Runnable> queue = blockedClients.get(key);
             if (queue != null) {
-                while (!list.isEmpty() && !queue.isEmpty()) {
+                while (!queue.isEmpty()) {
                     Runnable client = queue.poll();
                     if (client != null) {
                         System.out.println("RPUSH notifying client for key: " + key);
@@ -41,7 +41,7 @@ public class ListStore {
             System.out.println("LPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<Runnable> queue = blockedClients.get(key);
             if (queue != null) {
-                while (!list.isEmpty() && !queue.isEmpty()) {
+                while (!queue.isEmpty()) {
                     Runnable client = queue.poll();
                     if (client != null) {
                         System.out.println("LPUSH notifying client for key: " + key);

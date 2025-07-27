@@ -250,7 +250,7 @@ public class ClientHandler {
             }
             i++; // Move past "streams"
             int keyCount = (command.size() - i) / 2;
-            for (int j = i; j < i + keyCount; j++) {
+            for (int j = i; i < i + keyCount; j++) {
                 streamKeys.add(command.get(j));
             }
             for (int j = i + keyCount; j < command.size(); j++) {
@@ -328,7 +328,8 @@ public class ClientHandler {
                     break;
                 case "INCR":
                     try {
-                        response.append(":").append(kvStore.increment(cmd.get(1))).append("\r\n");
+                        long newValue = kvStore.increment(cmd.get(1));
+                        response.append(":").append(newValue).append("\r\n");
                     } catch (IllegalArgumentException e) {
                         response.append("-ERR value is not an integer or out of range\r\n");
                     }

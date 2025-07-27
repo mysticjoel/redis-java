@@ -1,3 +1,5 @@
 *.jar
 target/
 .idea/
+/.codecrafters/
+codecrafters.yml

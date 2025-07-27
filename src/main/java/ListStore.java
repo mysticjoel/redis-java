@@ -11,21 +11,23 @@ public class ListStore {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
         synchronized (list) {
             list.addAll(values);
-            int sizeAfterPush = list.size(); // Store size after adding elements
+            int sizeAfterPush = list.size();
             System.out.println("RPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<List<String>> queue = blockedClients.get(key);
-            if (queue != null && !list.isEmpty()) {
-                List<String> result = new ArrayList<>();
-                result.add(key);
-                result.add(list.remove(0));
-                System.out.println("RPUSH notifying with result: " + result);
-                queue.offer(result);
+            if (queue != null) {
+                while (!list.isEmpty() && !queue.isEmpty()) {
+                    List<String> result = new ArrayList<>();
+                    result.add(key);
+                    result.add(list.remove(0));
+                    System.out.println("RPUSH notifying with result: " + result);
+                    queue.offer(result);
+                }
                 if (list.isEmpty()) {
                     lists.remove(key);
                     blockedClients.remove(key);
                 }
             }
-            return sizeAfterPush; // Return size after adding, before popping
+            return sizeAfterPush;
         }
     }
 
@@ -35,21 +37,23 @@ public class ListStore {
             for (String value : values) {
                 list.add(0, value);
             }
-            int sizeAfterPush = list.size(); // Store size after adding elements
+            int sizeAfterPush = list.size();
             System.out.println("LPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<List<String>> queue = blockedClients.get(key);
-            if (queue != null && !list.isEmpty()) {
-                List<String> result = new ArrayList<>();
-                result.add(key);
-                result.add(list.remove(0));
-                System.out.println("LPUSH notifying with result: " + result);
-                queue.offer(result);
+            if (queue != null) {
+                while (!list.isEmpty() && !queue.isEmpty()) {
+                    List<String> result = new ArrayList<>();
+                    result.add(key);
+                    result.add(list.remove(0));
+                    System.out.println("LPUSH notifying with result: " + result);
+                    queue.offer(result);
+                }
                 if (list.isEmpty()) {
                     lists.remove(key);
                     blockedClients.remove(key);
                 }
             }
-            return sizeAfterPush; // Return size after adding, before popping
+            return sizeAfterPush;
         }
     }
 
@@ -92,9 +96,9 @@ public class ListStore {
     }
 
     public List<String> blpop(String key, long timeoutMs) {
-        System.out.println("BLPOP key: " + key + ", timeoutMs: " + timeoutMs);
-        List<String> list = lists.getOrDefault(key, new ArrayList<>());
+        System.out.println("BLPOP key: " + key + ", timeoutMs: " + timeoutMs + ", thread: " + Thread.currentThread().getName());
         BlockingQueue<List<String>> queue = blockedClients.computeIfAbsent(key, k -> new LinkedBlockingQueue<>());
+        List<String> list = lists.getOrDefault(key, new ArrayList<>());
 
         synchronized (list) {
             if (!list.isEmpty()) {
@@ -108,13 +112,15 @@ public class ListStore {
                 }
                 return result;
             }
+            // Add to queue before releasing lock to avoid race condition
+            queue.offer(new ArrayList<>()); // Placeholder to register client
         }
 
         try {
             System.out.println("BLPOP blocking on queue for key: " + key);
             List<String> result = timeoutMs == 0 ? queue.take() : queue.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             System.out.println("BLPOP result: " + result);
-            if (result == null) {
+            if (result == null || result.isEmpty()) {
                 blockedClients.remove(key, queue);
                 return null;
             }

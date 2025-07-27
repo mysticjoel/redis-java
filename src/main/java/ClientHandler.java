@@ -259,17 +259,22 @@ public class ClientHandler {
         }
 
         Map<String, List<StreamStore.StreamEntry>> result = streamStore.read(streamKeys, startIds, blockMs);
-        writeResponse(output, formatXreadResponse(result, streamKeys));
+        writeResponse(output, formatXreadResponse(result, streamKeys, blockMs));
     }
 
-    private String formatXreadResponse(Map<String, List<StreamStore.StreamEntry>> result, List<String> keys) {
+    private String formatXreadResponse(Map<String, List<StreamStore.StreamEntry>> result, List<String> keys, long blockMs) {
         int nonEmptyStreams = 0;
         for (String key : keys) {
             if (result.containsKey(key) && !result.get(key).isEmpty()) {
                 nonEmptyStreams++;
             }
         }
-        if (nonEmptyStreams == 0) return "*0\r\n";
+        if (nonEmptyStreams == 0 && blockMs > 0) {
+            return "$-1\r\n";
+        }
+        if (nonEmptyStreams == 0) {
+            return "*0\r\n";
+        }
 
         StringBuilder response = new StringBuilder();
         response.append("*").append(nonEmptyStreams).append("\r\n");

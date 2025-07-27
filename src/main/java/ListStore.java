@@ -11,19 +11,22 @@ public class ListStore {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
         synchronized (list) {
             list.addAll(values);
-            // Notify blocked clients
+            int sizeAfterPush = list.size(); // Store size after adding elements
+            System.out.println("RPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<List<String>> queue = blockedClients.get(key);
             if (queue != null && !list.isEmpty()) {
                 List<String> result = new ArrayList<>();
                 result.add(key);
                 result.add(list.remove(0));
+                System.out.println("RPUSH notifying with result: " + result);
                 queue.offer(result);
                 if (list.isEmpty()) {
                     lists.remove(key);
+                    blockedClients.remove(key);
                 }
             }
+            return sizeAfterPush; // Return size after adding, before popping
         }
-        return list.size();
     }
 
     public int lpush(String key, List<String> values) {
@@ -32,19 +35,22 @@ public class ListStore {
             for (String value : values) {
                 list.add(0, value);
             }
-            // Notify blocked clients
+            int sizeAfterPush = list.size(); // Store size after adding elements
+            System.out.println("LPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<List<String>> queue = blockedClients.get(key);
             if (queue != null && !list.isEmpty()) {
                 List<String> result = new ArrayList<>();
                 result.add(key);
                 result.add(list.remove(0));
+                System.out.println("LPUSH notifying with result: " + result);
                 queue.offer(result);
                 if (list.isEmpty()) {
                     lists.remove(key);
+                    blockedClients.remove(key);
                 }
             }
+            return sizeAfterPush; // Return size after adding, before popping
         }
-        return list.size();
     }
 
     public List<String> lrange(String key, int start, int stop) {
@@ -79,12 +85,14 @@ public class ListStore {
             }
             if (list.isEmpty()) {
                 lists.remove(key);
+                blockedClients.remove(key);
             }
         }
         return result;
     }
 
     public List<String> blpop(String key, long timeoutMs) {
+        System.out.println("BLPOP key: " + key + ", timeoutMs: " + timeoutMs);
         List<String> list = lists.getOrDefault(key, new ArrayList<>());
         BlockingQueue<List<String>> queue = blockedClients.computeIfAbsent(key, k -> new LinkedBlockingQueue<>());
 
@@ -93,6 +101,7 @@ public class ListStore {
                 List<String> result = new ArrayList<>();
                 result.add(key);
                 result.add(list.remove(0));
+                System.out.println("BLPOP immediate result: " + result);
                 if (list.isEmpty()) {
                     lists.remove(key);
                     blockedClients.remove(key);
@@ -102,7 +111,9 @@ public class ListStore {
         }
 
         try {
+            System.out.println("BLPOP blocking on queue for key: " + key);
             List<String> result = timeoutMs == 0 ? queue.take() : queue.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            System.out.println("BLPOP result: " + result);
             if (result == null) {
                 blockedClients.remove(key, queue);
                 return null;
@@ -111,6 +122,7 @@ public class ListStore {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             blockedClients.remove(key, queue);
+            System.out.println("BLPOP interrupted: " + e.getMessage());
             return null;
         }
     }

@@ -1,318 +1,394 @@
 import java.io.*;
 import java.net.Socket;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
-public class ClientHandler implements Runnable {
-    private final Socket clientSocket;
-    public static final ConcurrentHashMap<String, String> map = new ConcurrentHashMap<>();
-    public static final ConcurrentHashMap<String, Long> expiryMap = new ConcurrentHashMap<>();
-    byte[] emptyRDB = Base64.getDecoder().decode(
-            "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
-    );
+public class ClientHandler {
+    private final Socket socket;
+    private final KeyValueStore kvStore;
+    private final StreamStore streamStore;
+    private final ListStore listStore;
+    private final ReplicationManager replicationManager;
+    private final Map<String, String> config;
+    private boolean transactionStarted = false;
+    private final List<List<String>> transactionCommands = new ArrayList<>();
 
-    public ClientHandler(Socket socket) {
-        this.clientSocket = socket;
+    public ClientHandler(Socket socket, KeyValueStore kvStore, StreamStore streamStore,
+                         ListStore listStore, ReplicationManager replicationManager, Map<String, String> config) {
+        this.socket = socket;
+        this.kvStore = kvStore;
+        this.streamStore = streamStore;
+        this.listStore = listStore;
+        this.replicationManager = replicationManager;
+        this.config = config;
     }
 
-    public void propagateToReplicas(String[] commandParts) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("*").append(commandParts.length).append("\r\n");
-        for (String part : commandParts) {
-            sb.append("$").append(part.length()).append("\r\n").append(part).append("\r\n");
-        }
-        byte[] payload = sb.toString().getBytes();
-        synchronized (Main.class) {
-            Main.masterOffset += payload.length;
-        }
-        synchronized (Main.replicaConnections) {
-            for (Main.ReplicaConnection replica : Main.replicaConnections.values()) {
-                try {
-                    replica.outputStream.write(payload);
-                    replica.outputStream.flush();
-                    System.out.println("Propagated to replica@" + replica.port + ": " + sb.toString().replace("\r\n", "\\r\\n"));
-                } catch (IOException e) {
-                    Main.replicaConnections.remove(replica.port);
-                    System.err.println("Failed to propagate to replica@" + replica.port + ": " + e.getMessage());
-                }
-            }
-        }
-    }
+    public void handle() {
+        try (InputStream input = socket.getInputStream();
+             OutputStream output = socket.getOutputStream()) {
+            while (true) {
+                RESPParser.ParseResult result = RESPParser.parseRESP(input);
+                List<String> command = result.command;
+                if (command.isEmpty()) continue;
 
-    @Override
-    public void run() {
-        try (
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                OutputStream writer = clientSocket.getOutputStream()
-        ) {
-            String line;
-            Integer replicaPort = null;
-            while ((line = reader.readLine()) != null) {
-                System.out.println("Received line: " + line + ", role: " + (Main.master != null ? "slave" : "master"));
-
-                if (line.trim().equalsIgnoreCase("*2")) {
-                    String commandLength = reader.readLine();
-                    String command = reader.readLine();
-                    System.out.println("Received *2 command: " + command + ", role: " + (Main.master != null ? "slave" : "master"));
-                    if (command.equalsIgnoreCase("DEL") && Main.master == null) { // Master only
-                        reader.readLine(); // e.g., $<len>
-                        String key = reader.readLine(); // e.g., key
-                        map.remove(key);
-                        expiryMap.remove(key);
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("*2\r\n$3\r\nDEL\r\n$").append(key.length()).append("\r\n").append(key).append("\r\n");
-                        writer.write(":1\r\n".getBytes());
-                        propagateToReplicas(new String[]{"DEL", key});
-                        writer.flush();
-                        continue;
-                    }
-                }
-
-                if (line.trim().equalsIgnoreCase("*3")) {
-                    String commandLength = reader.readLine();
-                    String command = reader.readLine();
-                    System.out.println("Received *3 command: " + command + ", role: " + (Main.master != null ? "slave" : "master"));
-                    if (command.equalsIgnoreCase("WAIT") && Main.master == null) { // Master only
-                        reader.readLine(); // e.g., $1
-                        String numReplicasStr = reader.readLine(); // e.g., 1
-                        reader.readLine(); // e.g., $3
-                        String timeoutStr = reader.readLine(); // e.g., 500
-                        int numReplicas = Integer.parseInt(numReplicasStr);
-                        long timeoutMs = Long.parseLong(timeoutStr);
-
-                        long startTime = System.currentTimeMillis();
-                        long targetOffset;
-                        synchronized (Main.class) {
-                            targetOffset = Main.masterOffset;
-                        }
-                        int ackCount = 0;
-                        Set<Integer> respondingReplicas = new HashSet<>();
-                        String getAck = "*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n";
-
-                        while (ackCount < numReplicas && (System.currentTimeMillis() - startTime) < timeoutMs) {
-                            synchronized (Main.replicaConnections) {
-                                for (Main.ReplicaConnection replica : new ArrayList<>(Main.replicaConnections.values())) {
-                                    if (respondingReplicas.contains(replica.port)) continue;
-                                    try {
-                                        replica.outputStream.write(getAck.getBytes());
-                                        replica.outputStream.flush();
-                                        System.out.println("Sent REPLCONF GETACK to replica@" + replica.port);
-                                        String respLine = replica.inputStream.readLine();
-                                        System.out.println("Received from replica@" + replica.port + ": " + respLine);
-                                        if (respLine != null && respLine.equals("*3")) {
-                                            replica.inputStream.readLine(); // $8
-                                            replica.inputStream.readLine(); // REPLCONF
-                                            replica.inputStream.readLine(); // $3
-                                            replica.inputStream.readLine(); // ACK
-                                            replica.inputStream.readLine(); // $<length>
-                                            String offsetStr = replica.inputStream.readLine(); // offset
-                                            long replicaOffset = Long.parseLong(offsetStr);
-                                            System.out.println("Replica@" + replica.port + " ACK offset: " + replicaOffset + ", target: " + targetOffset);
-                                            if (replicaOffset >= targetOffset) {
-                                                respondingReplicas.add(replica.port);
-                                                ackCount++;
-                                            }
-                                        } else {
-                                            System.out.println("Invalid or no ACK from replica@" + replica.port);
-                                        }
-                                    } catch (IOException e) {
-                                        Main.replicaConnections.remove(replica.port);
-                                        System.err.println("Error communicating with replica@" + replica.port + ": " + e.getMessage());
-                                    }
-                                }
-                            }
-                            if (ackCount < numReplicas) {
-                                try {
-                                    Thread.sleep(50);
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                            }
-                        }
-
-                        String response = ":" + ackCount + "\r\n";
-                        System.out.println("WAIT response: " + response);
-                        writer.write(response.getBytes());
-                        writer.flush();
-                        continue;
-                    } else if (command.equalsIgnoreCase("REPLCONF")) {
-                        reader.readLine(); // e.g., $14 or $4 or $6 or $3
-                        String subcommand = reader.readLine(); // e.g., listening-port, capa, ACK
-                        reader.readLine(); // e.g., $4 or $6 or $2
-                        String arg = reader.readLine(); // e.g., 6380, psync2, 31
-                        System.out.println("Received REPLCONF subcommand: " + subcommand + ", arg: " + arg + ", role: " + (Main.master != null ? "slave" : "master"));
-                        if (subcommand.equalsIgnoreCase("listening-port")) {
-                            replicaPort = Integer.parseInt(arg);
-                            writer.write("+OK\r\n".getBytes());
-                            writer.flush();
-                        } else if (subcommand.equalsIgnoreCase("capa")) {
-                            writer.write("+OK\r\n".getBytes());
-                            writer.flush();
-                        } else if (subcommand.equalsIgnoreCase("ACK")) {
-                            // Master processes ACK from replicas
-                            continue;
-                        }
-                        continue;
-                    } else if (command.equalsIgnoreCase("PSYNC")) {
-                        reader.readLine(); // e.g., $1
-                        reader.readLine(); // e.g., ?
-                        reader.readLine(); // e.g., $2
-                        reader.readLine(); // e.g., -1
-                        writer.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".getBytes());
-                        writer.write(("$" + emptyRDB.length + "\r\n").getBytes());
-                        writer.write(emptyRDB);
-                        if (replicaPort != null) {
-                            Main.replicaConnections.put(replicaPort, new Main.ReplicaConnection(clientSocket, replicaPort));
-                            System.out.println("Added replica@" + replicaPort + " to replicaConnections");
-                        }
-                        writer.flush();
-                        continue;
-                    } else if (command.equalsIgnoreCase("SET") && Main.master == null) { // Master only
-                        reader.readLine(); // e.g., $3
-                        String key = reader.readLine(); // e.g., foo
-                        reader.readLine(); // e.g., $3
-                        String value = reader.readLine(); // e.g., 123
-                        map.put(key, value);
-                        expiryMap.remove(key);
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("*3\r\n$3\r\nSET\r\n$").append(key.length()).append("\r\n").append(key).append("\r\n$").append(value.length()).append("\r\n").append(value).append("\r\n");
-                        writer.write("+OK\r\n".getBytes());
-                        if (reader.ready()) {
-                            reader.mark(1000);
-                            String maybeDollar = reader.readLine();
-                            if ("$2".equalsIgnoreCase(maybeDollar)) {
-                                String keyword = reader.readLine();
-                                if ("px".equalsIgnoreCase(keyword)) {
-                                    reader.readLine();
-                                    String millisStr = reader.readLine();
-                                    try {
-                                        long expireAt = System.currentTimeMillis() + Long.parseLong(millisStr);
-                                        expiryMap.put(key, expireAt);
-                                    } catch (NumberFormatException ignored) {
-                                    }
-                                }
-                            }
-                        }
-                        propagateToReplicas(new String[]{"SET", key, value});
-                        writer.flush();
-                        continue;
-                    }
-                }
-
-                if (line.trim().equalsIgnoreCase("PING")) {
-                    writer.write("+PONG\r\n".getBytes());
-                    writer.flush();
+                String cmd = command.get(0).toUpperCase();
+                if (transactionStarted && (cmd.equals("SET") || cmd.equals("INCR") || cmd.equals("GET"))) {
+                    transactionCommands.add(command);
+                    writeResponse(output, "+QUEUED\r\n");
                     continue;
                 }
 
-                if (line.trim().equalsIgnoreCase("ECHO")) {
-                    reader.readLine();
-                    String value = reader.readLine();
-                    String response = "$" + value.length() + "\r\n" + value + "\r\n";
-                    writer.write(response.getBytes());
-                    writer.flush();
-                    continue;
-                }
-
-                if (line.trim().equalsIgnoreCase("CONFIG")) {
-                    reader.readLine();
-                    reader.readLine();
-                    reader.readLine();
-                    String param = reader.readLine();
-                    String value = "";
-                    if ("dir".equalsIgnoreCase(param)) value = Main.dir;
-                    if ("dbfilename".equalsIgnoreCase(param)) value = Main.dbfilename;
-                    String response = "*2\r\n" +
-                            "$" + param.length() + "\r\n" + param + "\r\n" +
-                            "$" + value.length() + "\r\n" + value + "\r\n";
-                    writer.write(response.getBytes());
-                    writer.flush();
-                    continue;
-                }
-
-                if (line.trim().equalsIgnoreCase("GET")) {
-                    reader.readLine();
-                    String key = reader.readLine();
-                    Long expireTime = expiryMap.get(key);
-                    if (expireTime != null && System.currentTimeMillis() > expireTime) {
-                        map.remove(key);
-                        expiryMap.remove(key);
-                        writer.write("$-1\r\n".getBytes());
-                        writer.flush();
-                        continue;
-                    }
-                    String value = map.get(key);
-                    if (value != null) {
-                        String resp = "$" + value.length() + "\r\n" + value + "\r\n";
-                        writer.write(resp.getBytes());
-                    } else {
-                        writer.write("$-1\r\n".getBytes());
-                    }
-                    writer.flush();
-                    continue;
-                }
-
-                if (line.trim().equalsIgnoreCase("KEYS")) {
-                    reader.readLine();
-                    String pattern = reader.readLine();
-                    if ("*".equals(pattern)) {
-                        long now = System.currentTimeMillis();
-                        StringBuilder response = new StringBuilder();
-                        int count = 0;
-                        for (String key : map.keySet()) {
-                            Long exp = expiryMap.get(key);
-                            if (exp != null && now > exp) {
-                                map.remove(key);
-                                expiryMap.remove(key);
-                                continue;
-                            }
-                            count++;
-                        }
-                        response.append("*").append(count).append("\r\n");
-                        for (String key : map.keySet()) {
-                            Long exp = expiryMap.get(key);
-                            if (exp != null && now > exp) continue;
-                            response.append("$").append(key.length()).append("\r\n").append(key).append("\r\n");
-                        }
-                        writer.write(response.toString().getBytes());
-                    } else {
-                        writer.write("*0\r\n".getBytes());
-                    }
-                    writer.flush();
-                    continue;
-                }
-
-                if (line.trim().equalsIgnoreCase("INFO")) {
-                    reader.readLine();
-                    String section = reader.readLine();
-                    if ("replication".equalsIgnoreCase(section)) {
-                        StringBuilder info;
-                        if (Main.master != null) {
-                            info = new StringBuilder("role:slave");
-                        } else {
-                            info = new StringBuilder("role:master");
-                        }
-                        info.append("\r\n");
-                        info.append("master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb");
-                        info.append("\r\n");
-                        info.append("master_repl_offset:").append(Main.masterOffset).append("\r\n");
-                        String response = "$" + info.length() + "\r\n" + info + "\r\n";
-                        writer.write(response.getBytes());
-                    } else {
-                        writer.write("$-1\r\n".getBytes());
-                    }
-                    writer.flush();
-                    continue;
+                switch (cmd) {
+                    case "PING":
+                        writeResponse(output, "+PONG\r\n");
+                        break;
+                    case "ECHO":
+                        writeResponse(output, RESPParser.buildBulkString(command.get(1)));
+                        break;
+                    case "SET":
+                        handleSet(command, result.bytesConsumed, output);
+                        break;
+                    case "GET":
+                        writeResponse(output, handleGet(command));
+                        break;
+                    case "CONFIG":
+                        handleConfig(command, output);
+                        break;
+                    case "REPLCONF":
+                        handleReplconf(command, output);
+                        break;
+                    case "PSYNC":
+                        replicationManager.handlePsync(socket, input, output);
+                        break;
+                    case "KEYS":
+                        handleKeys(command, output);
+                        break;
+                    case "INFO":
+                        handleInfo(command, output);
+                        break;
+                    case "TYPE":
+                        handleType(command, output);
+                        break;
+                    case "XADD":
+                        handleXadd(command, output);
+                        break;
+                    case "XRANGE":
+                        handleXrange(command, output);
+                        break;
+                    case "XREAD":
+                        handleXread(command, output);
+                        break;
+                    case "INCR":
+                        handleIncr(command, output);
+                        break;
+                    case "MULTI":
+                        transactionStarted = true;
+                        writeResponse(output, "+OK\r\n");
+                        break;
+                    case "EXEC":
+                        handleExec(output);
+                        break;
+                    case "DISCARD":
+                        handleDiscard(output);
+                        break;
+                    case "RPUSH":
+                        handleRpush(command, output);
+                        break;
+                    case "LRANGE":
+                        handleLrange(command, output);
+                        break;
+                    case "LPUSH":
+                        handleLpush(command, output);
+                        break;
+                    case "LLEN":
+                        writeResponse(output, ":" + listStore.llen(command.get(1)) + "\r\n");
+                        break;
+                    case "LPOP":
+                        handleLpop(command, output);
+                        break;
+                    case "BLPOP":
+                        handleBlpop(command, output);
+                        break;
+                    case "WAIT":
+                        handleWait(command, output);
+                        break;
+                    default:
+                        writeResponse(output, "-ERR unknown command\r\n");
                 }
             }
         } catch (IOException e) {
-            System.err.println("Client error: " + e.getMessage());
-        } finally {
+            System.out.println("Client error: " + e.getMessage());
+        }
+    }
+
+    private void writeResponse(OutputStream output, String response) throws IOException {
+        output.write(response.getBytes("UTF-8"));
+        output.flush();
+    }
+
+    private void handleSet(List<String> command, int bytesConsumed, OutputStream output) throws IOException {
+        String key = command.get(1);
+        String value = command.get(2);
+        long expiryTime = Long.MAX_VALUE;
+        if (command.size() >= 5 && command.get(3).equalsIgnoreCase("PX")) {
             try {
-                clientSocket.close();
-            } catch (IOException e) {
-                System.err.println("Socket close failed: " + e.getMessage());
+                expiryTime = System.currentTimeMillis() + Long.parseLong(command.get(4));
+            } catch (NumberFormatException e) {
+                writeResponse(output, "-ERR invalid PX value\r\n");
+                return;
             }
         }
+        kvStore.set(key, value, expiryTime);
+        replicationManager.propagateCommand(RESPParser.buildArray("SET", key, value), bytesConsumed);
+        writeResponse(output, "+OK\r\n");
+    }
+
+    private String handleGet(List<String> command) {
+        String value = kvStore.get(command.get(1));
+        return value != null ? RESPParser.buildBulkString(value) : "$-1\r\n";
+    }
+
+    private void handleConfig(List<String> command, OutputStream output) throws IOException {
+        if (command.size() >= 3 && command.get(1).equalsIgnoreCase("GET")) {
+            String value = config.get(command.get(2));
+            writeResponse(output, value != null ?
+                    RESPParser.buildArray(command.get(2), value) : "*0\r\n");
+        } else {
+            writeResponse(output, "-ERR wrong CONFIG usage\r\n");
+        }
+    }
+
+    private void handleReplconf(List<String> command, OutputStream output) throws IOException {
+        if (command.size() >= 3 && command.get(1).equalsIgnoreCase("ACK")) {
+            replicationManager.updateReplicaOffset(socket, Long.parseLong(command.get(2)));
+        } else if (!command.get(1).equalsIgnoreCase("GETACK")) {
+            writeResponse(output, "+OK\r\n");
+        }
+    }
+
+    private void handleKeys(List<String> command, OutputStream output) throws IOException {
+        if (command.get(1).equals("*")) {
+            StringBuilder response = new StringBuilder();
+            response.append("*").append(kvStore.keys().size()).append("\r\n");
+            for (String key : kvStore.keys()) {
+                response.append(RESPParser.buildBulkString(key));
+            }
+            writeResponse(output, response.toString());
+        }
+    }
+
+    private void handleInfo(List<String> command, OutputStream output) throws IOException {
+        if (command.get(1).equalsIgnoreCase("replication")) {
+            String info = config.containsKey("replicaof") ?
+                    "role:slave" :
+                    "role:master\nmaster_replid:0123456789abcdef0123456789abcdef01234567\nmaster_repl_offset:0";
+            writeResponse(output, RESPParser.buildBulkString(info));
+        }
+    }
+
+    private void handleType(List<String> command, OutputStream output) throws IOException {
+        String key = command.get(1);
+        String type = kvStore.type(key);
+        if (type.equals("none")) type = streamStore.type(key);
+        writeResponse(output, "+" + type + "\r\n");
+    }
+
+    private void handleXadd(List<String> command, OutputStream output) throws IOException {
+        try {
+            String streamKey = command.get(1);
+            String entryId = command.get(2);
+            Map<String, String> fields = new HashMap<>();
+            for (int i = 3; i < command.size() - 1; i += 2) {
+                fields.put(command.get(i), command.get(i + 1));
+            }
+            String resultId = streamStore.add(streamKey, entryId, fields);
+            writeResponse(output, RESPParser.buildBulkString(resultId));
+        } catch (IllegalArgumentException e) {
+            writeResponse(output, "-ERR " + e.getMessage() + "\r\n");
+        }
+    }
+
+    private void handleXrange(List<String> command, OutputStream output) throws IOException {
+        List<StreamStore.StreamEntry> entries = streamStore.range(
+                command.get(1), command.get(2), command.get(3));
+        StringBuilder response = new StringBuilder();
+        response.append("*").append(entries.size()).append("\r\n");
+        for (StreamStore.StreamEntry entry : entries) {
+            response.append("*2\r\n");
+            response.append(RESPParser.buildBulkString(entry.id));
+            response.append("*").append(entry.fields.size() * 2).append("\r\n");
+            for (Map.Entry<String, String> field : entry.fields.entrySet()) {
+                response.append(RESPParser.buildBulkString(field.getKey()));
+                response.append(RESPParser.buildBulkString(field.getValue()));
+            }
+        }
+        writeResponse(output, response.toString());
+    }
+
+    private void handleXread(List<String> command, OutputStream output) throws IOException {
+        if (command.get(1).equalsIgnoreCase("block")) {
+            long blockMs = Long.parseLong(command.get(2));
+            List<String> streamKeys = new ArrayList<>();
+            List<String> startIds = new ArrayList<>();
+            streamKeys.add(command.get(4));
+            startIds.add(command.get(5));
+            Map<String, List<StreamStore.StreamEntry>> result = streamStore.read(streamKeys, startIds, blockMs);
+            writeResponse(output, formatXreadResponse(result));
+        } else {
+            List<String> streamKeys = new ArrayList<>();
+            List<String> startIds = new ArrayList<>();
+            if (command.size() >= 6) {
+                streamKeys.add(command.get(2));
+                streamKeys.add(command.get(3));
+                startIds.add(command.get(4));
+                startIds.add(command.get(5));
+            } else {
+                streamKeys.add(command.get(2));
+                startIds.add(command.get(3));
+            }
+            Map<String, List<StreamStore.StreamEntry>> result = streamStore.read(streamKeys, startIds, 0);
+            writeResponse(output, formatXreadResponse(result));
+        }
+    }
+
+    private String formatXreadResponse(Map<String, List<StreamStore.StreamEntry>> result) {
+        if (result.isEmpty()) return "*0\r\n";
+        StringBuilder response = new StringBuilder();
+        response.append("*").append(result.size()).append("\r\n");
+        for (Map.Entry<String, List<StreamStore.StreamEntry>> stream : result.entrySet()) {
+            response.append("*2\r\n");
+            response.append(RESPParser.buildBulkString(stream.getKey()));
+            response.append("*").append(stream.getValue().size()).append("\r\n");
+            for (StreamStore.StreamEntry entry : stream.getValue()) {
+                response.append("*2\r\n");
+                response.append(RESPParser.buildBulkString(entry.id));
+                response.append("*").append(entry.fields.size() * 2).append("\r\n");
+                for (Map.Entry<String, String> field : entry.fields.entrySet()) {
+                    response.append(RESPParser.buildBulkString(field.getKey()));
+                    response.append(RESPParser.buildBulkString(field.getValue()));
+                }
+            }
+        }
+        return response.toString();
+    }
+
+    private void handleIncr(List<String> command, OutputStream output) throws IOException {
+        try {
+            long newValue = kvStore.increment(command.get(1));
+            writeResponse(output, ":" + newValue + "\r\n");
+        } catch (IllegalArgumentException e) {
+            writeResponse(output, "-ERR value is not an integer or out of range\r\n");
+        }
+    }
+
+    private void handleExec(OutputStream output) throws IOException {
+        if (!transactionStarted) {
+            writeResponse(output, "-ERR EXEC without MULTI\r\n");
+            return;
+        }
+        if (transactionCommands.isEmpty()) {
+            writeResponse(output, "*0\r\n");
+            transactionStarted = false;
+            return;
+        }
+
+        StringBuilder response = new StringBuilder();
+        response.append("*").append(transactionCommands.size()).append("\r\n");
+        for (List<String> cmd : transactionCommands) {
+            String command = cmd.get(0).toUpperCase();
+            switch (command) {
+                case "SET":
+                    handleSet(cmd, 0, new ByteArrayOutputStream());
+                    response.append("+OK\r\n");
+                    break;
+                case "INCR":
+                    try {
+                        response.append(":").append(kvStore.increment(cmd.get(1))).append("\r\n");
+                    } catch (IllegalArgumentException e) {
+                        response.append("-ERR value is not an integer or out of range\r\n");
+                    }
+                    break;
+                case "GET":
+                    response.append(handleGet(cmd));
+                    break;
+                default:
+                    response.append("-ERR Unsupported command in transaction\r\n");
+            }
+        }
+        transactionStarted = false;
+        transactionCommands.clear();
+        writeResponse(output, response.toString());
+    }
+
+    private void handleDiscard(OutputStream output) throws IOException {
+        if (!transactionStarted) {
+            writeResponse(output, "-ERR DISCARD without MULTI\r\n");
+        } else {
+            transactionStarted = false;
+            transactionCommands.clear();
+            writeResponse(output, "+OK\r\n");
+        }
+    }
+
+    private void handleRpush(List<String> command, OutputStream output) throws IOException {
+        List<String> values = command.subList(2, command.size());
+        int size = listStore.rpush(command.get(1), values);
+        writeResponse(output, ":" + size + "\r\n");
+    }
+
+    private void handleLrange(List<String> command, OutputStream output) throws IOException {
+        List<String> items = listStore.lrange(command.get(1),
+                Integer.parseInt(command.get(2)), Integer.parseInt(command.get(3)));
+        StringBuilder response = new StringBuilder();
+        response.append("*").append(items.size()).append("\r\n");
+        for (String item : items) {
+            response.append(RESPParser.buildBulkString(item));
+        }
+        writeResponse(output, response.toString());
+    }
+
+    private void handleLpush(List<String> command, OutputStream output) throws IOException {
+        List<String> values = command.subList(2, command.size());
+        int size = listStore.lpush(command.get(1), values);
+        writeResponse(output, ":" + size + "\r\n");
+    }
+
+    private void handleLpop(List<String> command, OutputStream output) throws IOException {
+        int count = command.size() >= 3 ? Integer.parseInt(command.get(2)) : 1;
+        List<String> items = listStore.lpop(command.get(1), count);
+        if (items == null) {
+            writeResponse(output, "$-1\r\n");
+        } else if (count == 1) {
+            writeResponse(output, RESPParser.buildBulkString(items.get(0)));
+        } else {
+            StringBuilder response = new StringBuilder();
+            response.append("*").append(items.size()).append("\r\n");
+            for (String item : items) {
+                response.append(RESPParser.buildBulkString(item));
+            }
+            writeResponse(output, response.toString());
+        }
+    }
+
+    private void handleBlpop(List<String> command, OutputStream output) throws IOException {
+        double timeoutSeconds = Double.parseDouble(command.get(2));
+        long timeoutMs = (long) (timeoutSeconds * 1000);
+        List<String> result = listStore.blpop(command.get(1), timeoutMs);
+        if (result == null) {
+            writeResponse(output, "$-1\r\n");
+        } else {
+            StringBuilder response = new StringBuilder();
+            response.append("*2\r\n");
+            response.append(RESPParser.buildBulkString(command.get(1)));
+            response.append(RESPParser.buildBulkString(result.get(0)));
+            writeResponse(output, response.toString());
+        }
+    }
+
+    private void handleWait(List<String> command, OutputStream output) throws IOException {
+        int requiredAcks = Integer.parseInt(command.get(1));
+        int timeoutMs = Integer.parseInt(command.get(2));
+        long masterOffset = replicationManager.getMasterOffset();
+        int acks = replicationManager.waitForAcks(requiredAcks, timeoutMs, masterOffset);
+        writeResponse(output, ":" + acks + "\r\n");
     }
 }

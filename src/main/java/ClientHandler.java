@@ -28,7 +28,7 @@ public class ClientHandler {
     public void handle() {
         try (InputStream input = socket.getInputStream();
              OutputStream output = socket.getOutputStream()) {
-            System.out.println("Handling client: " + socket);
+            System.out.println("Handling client: " + socket + ", isClosed: " + socket.isClosed());
             while (!socket.isClosed()) {
                 RESPParser.ParseResult result = RESPParser.parseRESP(input);
                 List<String> command = result.command;
@@ -128,8 +128,11 @@ public class ClientHandler {
 
     private void writeResponse(OutputStream output, String response) throws IOException {
         if (!socket.isClosed()) {
+            System.out.println("Writing response: " + response + ", socket closed: " + socket.isClosed());
             output.write(response.getBytes("UTF-8"));
             output.flush();
+        } else {
+            System.out.println("Socket closed, cannot write: " + response);
         }
     }
 
@@ -407,20 +410,49 @@ public class ClientHandler {
     private void handleBlpop(List<String> command, OutputStream output) throws IOException {
         double timeoutSeconds = Double.parseDouble(command.get(2));
         long timeoutMs = (long) (timeoutSeconds * 1000);
+        System.out.println("BLPOP command: " + command);
         executor.submit(() -> {
             try {
-                System.out.println("BLPOP command: " + command);
-                List<String> result = listStore.blpop(command.get(1), timeoutMs);
-                System.out.println("BLPOP result: " + result);
-                synchronized (output) {
-                    if (!socket.isClosed()) {
-                        if (result == null) {
-                            writeResponse(output, "$-1\r\n");
-                        } else {
+                List<String> result = listStore.blpop(command.get(1), timeoutMs, () -> {
+                    try {
+                        List<String> list = listStore.getList(command.get(1));
+                        synchronized (list) {
+                            if (!list.isEmpty()) {
+                                List<String> result = new ArrayList<>();
+                                result.add(command.get(1));
+                                result.add(list.remove(0));
+                                System.out.println("BLPOP callback result: " + result);
+                                synchronized (output) {
+                                    if (!socket.isClosed()) {
+                                        StringBuilder response = new StringBuilder();
+                                        response.append("*2\r\n");
+                                        response.append(RESPParser.buildBulkString(result.get(0)));
+                                        response.append(RESPParser.buildBulkString(result.get(1)));
+                                        writeResponse(output, response.toString());
+                                    }
+                                }
+                            } else {
+                                synchronized (output) {
+                                    if (!socket.isClosed()) {
+                                        writeResponse(output, "$-1\r\n");
+                                    }
+                                }
+                            }
+                            if (list.isEmpty()) {
+                                listStore.removeList(command.get(1));
+                            }
+                        }
+                    } catch (IOException e) {
+                        System.out.println("BLPOP callback error: " + e.getMessage() + ", socket closed: " + socket.isClosed());
+                    }
+                });
+                if (result != null) {
+                    synchronized (output) {
+                        if (!socket.isClosed()) {
                             StringBuilder response = new StringBuilder();
                             response.append("*2\r\n");
-                            response.append(RESPParser.buildBulkString(result.get(0))); // Key
-                            response.append(RESPParser.buildBulkString(result.get(1))); // Popped value
+                            response.append(RESPParser.buildBulkString(result.get(0)));
+                            response.append(RESPParser.buildBulkString(result.get(1)));
                             writeResponse(output, response.toString());
                         }
                     }

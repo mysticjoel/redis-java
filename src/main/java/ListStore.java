@@ -18,11 +18,8 @@ public class ListStore {
                 while (!list.isEmpty() && !queue.isEmpty()) {
                     Runnable client = queue.poll();
                     if (client != null) {
-                        List<String> result = new ArrayList<>();
-                        result.add(key);
-                        result.add(list.remove(0));
-                        System.out.println("RPUSH notifying with result: " + result);
-                        client.run(); // Signal client to process result
+                        System.out.println("RPUSH notifying client for key: " + key);
+                        client.run();
                     }
                 }
                 if (list.isEmpty()) {
@@ -47,10 +44,7 @@ public class ListStore {
                 while (!list.isEmpty() && !queue.isEmpty()) {
                     Runnable client = queue.poll();
                     if (client != null) {
-                        List<String> result = new ArrayList<>();
-                        result.add(key);
-                        result.add(list.remove(0));
-                        System.out.println("LPUSH notifying with result: " + result);
+                        System.out.println("LPUSH notifying client for key: " + key);
                         client.run();
                     }
                 }
@@ -120,7 +114,23 @@ public class ListStore {
             }
             queue.offer(callback);
             System.out.println("BLPOP registered in queue for key: " + key + ", queue size: " + queue.size());
-            return null; // Indicate blocking
+            return null;
+        }
+    }
+
+    public List<String> getList(String key) {
+        return lists.getOrDefault(key, new ArrayList<>());
+    }
+
+    public void removeList(String key) {
+        List<String> list = lists.get(key);
+        if (list != null) {
+            synchronized (list) {
+                if (list.isEmpty()) {
+                    lists.remove(key);
+                    blockedClients.remove(key);
+                }
+            }
         }
     }
 }

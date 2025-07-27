@@ -13,8 +13,8 @@ public class ListStore {
     public int lpush(String key, List<String> values) {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
         // Prepend values in the order they are provided
-        for (int i = values.size() - 1; i >= 0; i--) {
-            list.add(0, values.get(i));
+        for (String value : values) {
+            list.add(0, value);
         }
         return list.size();
     }
@@ -53,7 +53,7 @@ public class ListStore {
     }
 
     public List<String> blpop(String key, long timeoutMs) {
-        List<String> list = lists.getOrDefault(key, new ArrayList<>());
+        List<String> list = lists.getOrDefault(key, k -> new ArrayList<>());
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (list.isEmpty() && System.currentTimeMillis() < deadline) {
             try {

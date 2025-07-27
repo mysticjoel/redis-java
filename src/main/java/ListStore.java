@@ -12,53 +12,63 @@ public class ListStore {
 
     public int lpush(String key, List<String> values) {
         List<String> list = lists.computeIfAbsent(key, k -> new ArrayList<>());
+        // Prepend values in the order they are provided
         for (int i = values.size() - 1; i >= 0; i--) {
             list.add(0, values.get(i));
         }
         return list.size();
     }
 
-    public List<String> lrange(String key, int start, int end) {
-        List<String> list = lists.get(key);
-        if (list == null || list.isEmpty()) return new ArrayList<>();
-
-        int size = list.size();
-        if (start < 0) start = size + start;
-        if (end < 0) end = size + end;
-        start = Math.max(0, start);
-        end = Math.min(size - 1, end);
-
-        if (start > end || start >= size) return new ArrayList<>();
-        return new ArrayList<>(list.subList(start, end + 1));
+    public List<String> lrange(String key, int start, int stop) {
+        List<String> list = lists.getOrDefault(key, new ArrayList<>());
+        if (list.isEmpty()) {
+            return new ArrayList<>();
+        }
+        int adjustedStop = stop < 0 ? list.size() + stop : Math.min(stop, list.size() - 1);
+        int adjustedStart = Math.max(start, 0);
+        if (adjustedStart > adjustedStop || adjustedStart >= list.size()) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(list.subList(adjustedStart, adjustedStop + 1));
     }
 
     public int llen(String key) {
-        List<String> list = lists.get(key);
-        return list != null ? list.size() : 0;
+        return lists.getOrDefault(key, new ArrayList<>()).size();
     }
 
     public List<String> lpop(String key, int count) {
-        List<String> list = lists.get(key);
-        if (list == null || list.isEmpty()) return null;
-
-        count = Math.min(count, list.size());
+        List<String> list = lists.getOrDefault(key, new ArrayList<>());
+        if (list.isEmpty()) {
+            return null;
+        }
         List<String> result = new ArrayList<>();
+        count = Math.min(count, list.size());
         for (int i = 0; i < count; i++) {
             result.add(list.remove(0));
         }
-        if (list.isEmpty()) lists.remove(key);
+        if (list.isEmpty()) {
+            lists.remove(key);
+        }
         return result;
     }
 
     public List<String> blpop(String key, long timeoutMs) {
-        long deadline = timeoutMs == 0 ? Long.MAX_VALUE : System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
-            List<String> result = lpop(key, 1);
-            if (result != null) return result;
+        List<String> list = lists.getOrDefault(key, new ArrayList<>());
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (list.isEmpty() && System.currentTimeMillis() < deadline) {
             try {
                 Thread.sleep(10);
             } catch (InterruptedException ignored) {}
+            list = lists.getOrDefault(key, new ArrayList<>());
         }
-        return null;
+        if (list.isEmpty()) {
+            return null;
+        }
+        List<String> result = new ArrayList<>();
+        result.add(list.remove(0));
+        if (list.isEmpty()) {
+            lists.remove(key);
+        }
+        return result;
     }
 }

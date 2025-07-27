@@ -2,6 +2,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 public class ListStore {
     private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
@@ -114,6 +115,22 @@ public class ListStore {
             }
             queue.offer(callback);
             System.out.println("BLPOP registered in queue for key: " + key + ", queue size: " + queue.size());
+            if (timeoutMs > 0) {
+                try {
+                    boolean taken = queue.remove(callback);
+                    if (taken) {
+                        System.out.println("BLPOP timeout expired for key: " + key + ", queue size: " + queue.size());
+                        if (queue.isEmpty()) {
+                            blockedClients.remove(key);
+                        }
+                        return null;
+                    }
+                } catch (Exception e) {
+                    System.out.println("BLPOP timeout error: " + e.getMessage());
+                    blockedClients.remove(key, queue);
+                    return null;
+                }
+            }
             return null;
         }
     }

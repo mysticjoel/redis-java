@@ -53,7 +53,7 @@ public class ListStore {
     }
 
     public List<String> blpop(String key, long timeoutMs) {
-        List<String> list = lists.getOrDefault(key, k -> new ArrayList<>());
+        List<String> list = lists.getOrDefault(key, new ArrayList<>());
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (list.isEmpty() && System.currentTimeMillis() < deadline) {
             try {

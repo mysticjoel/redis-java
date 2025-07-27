@@ -405,8 +405,8 @@ public class ClientHandler {
         } else {
             StringBuilder response = new StringBuilder();
             response.append("*2\r\n");
-            response.append(RESPParser.buildBulkString(command.get(1)));
-            response.append(RESPParser.buildBulkString(result.get(0)));
+            response.append(RESPParser.buildBulkString(result.get(0))); // Key
+            response.append(RESPParser.buildBulkString(result.get(1))); // Popped value
             writeResponse(output, response.toString());
         }
     }

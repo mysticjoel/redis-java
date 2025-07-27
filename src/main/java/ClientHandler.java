@@ -229,7 +229,7 @@ public class ClientHandler {
         List<String> startIds = new ArrayList<>();
         long blockMs = 0;
 
-        if (command.get(1).equalsIgnoreCase("block")) {
+        if (command.size() > 1 && command.get(1).equalsIgnoreCase("block")) {
             blockMs = Long.parseLong(command.get(2));
             int i = 3;
             while (i < command.size() && !command.get(i).equalsIgnoreCase("streams")) {
@@ -250,7 +250,7 @@ public class ClientHandler {
             }
             i++; // Move past "streams"
             int keyCount = (command.size() - i) / 2;
-            for (int j = i; i < i + keyCount; j++) {
+            for (int j = i; j < i + keyCount; j++) {
                 streamKeys.add(command.get(j));
             }
             for (int j = i + keyCount; j < command.size(); j++) {

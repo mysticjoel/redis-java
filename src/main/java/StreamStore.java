@@ -103,7 +103,7 @@ public class StreamStore {
 
     public Map<String, List<StreamEntry>> read(List<String> keys, List<String> startIds, long blockMs) {
         Map<String, List<StreamEntry>> result = new LinkedHashMap<>(); // Preserve key order
-        long deadline = blockMs > 0 ? System.currentTimeMillis() + blockMs : 0;
+        long deadline = blockMs > 0 ? System.currentTimeMillis() + blockMs : Long.MAX_VALUE;
 
         while (true) {
             result.clear(); // Clear previous results to avoid stale data
@@ -123,7 +123,7 @@ public class StreamStore {
                     hasEntries = true;
                 }
             }
-            if (hasEntries || blockMs == 0 || System.currentTimeMillis() >= deadline) {
+            if (hasEntries || (blockMs > 0 && System.currentTimeMillis() >= deadline)) {
                 break;
             }
             try {

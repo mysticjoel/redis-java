@@ -1,6 +1,8 @@
 import java.io.*;
 import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ClientHandler {
     private final Socket socket;
@@ -11,6 +13,7 @@ public class ClientHandler {
     private final Map<String, String> config;
     private boolean transactionStarted = false;
     private final List<List<String>> transactionCommands = new ArrayList<>();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public ClientHandler(Socket socket, KeyValueStore kvStore, StreamStore streamStore,
                          ListStore listStore, ReplicationManager replicationManager, Map<String, String> config) {
@@ -25,7 +28,8 @@ public class ClientHandler {
     public void handle() {
         try (InputStream input = socket.getInputStream();
              OutputStream output = socket.getOutputStream()) {
-            while (true) {
+            System.out.println("Handling client: " + socket);
+            while (!socket.isClosed()) {
                 RESPParser.ParseResult result = RESPParser.parseRESP(input);
                 List<String> command = result.command;
                 if (command.isEmpty()) continue;
@@ -116,13 +120,17 @@ public class ClientHandler {
                 }
             }
         } catch (IOException e) {
-            System.out.println("Client error: " + e.getMessage());
+            System.out.println("Client error: " + e.getMessage() + ", socket closed: " + socket.isClosed());
+        } finally {
+            executor.shutdown();
         }
     }
 
     private void writeResponse(OutputStream output, String response) throws IOException {
-        output.write(response.getBytes("UTF-8"));
-        output.flush();
+        if (!socket.isClosed()) {
+            output.write(response.getBytes("UTF-8"));
+            output.flush();
+        }
     }
 
     private void handleSet(List<String> command, int bytesConsumed, OutputStream output) throws IOException {
@@ -399,16 +407,28 @@ public class ClientHandler {
     private void handleBlpop(List<String> command, OutputStream output) throws IOException {
         double timeoutSeconds = Double.parseDouble(command.get(2));
         long timeoutMs = (long) (timeoutSeconds * 1000);
-        List<String> result = listStore.blpop(command.get(1), timeoutMs);
-        if (result == null) {
-            writeResponse(output, "$-1\r\n");
-        } else {
-            StringBuilder response = new StringBuilder();
-            response.append("*2\r\n");
-            response.append(RESPParser.buildBulkString(result.get(0))); // Key
-            response.append(RESPParser.buildBulkString(result.get(1))); // Popped value
-            writeResponse(output, response.toString());
-        }
+        executor.submit(() -> {
+            try {
+                System.out.println("BLPOP command: " + command);
+                List<String> result = listStore.blpop(command.get(1), timeoutMs);
+                System.out.println("BLPOP result: " + result);
+                synchronized (output) {
+                    if (!socket.isClosed()) {
+                        if (result == null) {
+                            writeResponse(output, "$-1\r\n");
+                        } else {
+                            StringBuilder response = new StringBuilder();
+                            response.append("*2\r\n");
+                            response.append(RESPParser.buildBulkString(result.get(0))); // Key
+                            response.append(RESPParser.buildBulkString(result.get(1))); // Popped value
+                            writeResponse(output, response.toString());
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("BLPOP error: " + e.getMessage() + ", socket closed: " + socket.isClosed());
+            }
+        });
     }
 
     private void handleWait(List<String> command, OutputStream output) throws IOException {

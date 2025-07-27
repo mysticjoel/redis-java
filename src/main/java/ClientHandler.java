@@ -410,24 +410,24 @@ public class ClientHandler {
     private void handleBlpop(List<String> command, OutputStream output) throws IOException {
         double timeoutSeconds = Double.parseDouble(command.get(2));
         long timeoutMs = (long) (timeoutSeconds * 1000);
-        System.out.println("BLPOP command: " + command);
+        System.out.println("BLPOP command: " + command + ", thread: " + Thread.currentThread().getName());
         executor.submit(() -> {
             try {
-                List<String> result = listStore.blpop(command.get(1), timeoutMs, () -> {
+                List<String> immediateResult = listStore.blpop(command.get(1), timeoutMs, () -> {
                     try {
                         List<String> list = listStore.getList(command.get(1));
                         synchronized (list) {
                             if (!list.isEmpty()) {
-                                List<String> result = new ArrayList<>();
-                                result.add(command.get(1));
-                                result.add(list.remove(0));
-                                System.out.println("BLPOP callback result: " + result);
+                                List<String> callbackResult = new ArrayList<>();
+                                callbackResult.add(command.get(1));
+                                callbackResult.add(list.remove(0));
+                                System.out.println("BLPOP callback result: " + callbackResult);
                                 synchronized (output) {
                                     if (!socket.isClosed()) {
                                         StringBuilder response = new StringBuilder();
                                         response.append("*2\r\n");
-                                        response.append(RESPParser.buildBulkString(result.get(0)));
-                                        response.append(RESPParser.buildBulkString(result.get(1)));
+                                        response.append(RESPParser.buildBulkString(callbackResult.get(0)));
+                                        response.append(RESPParser.buildBulkString(callbackResult.get(1)));
                                         writeResponse(output, response.toString());
                                     }
                                 }
@@ -446,13 +446,13 @@ public class ClientHandler {
                         System.out.println("BLPOP callback error: " + e.getMessage() + ", socket closed: " + socket.isClosed());
                     }
                 });
-                if (result != null) {
+                if (immediateResult != null) {
                     synchronized (output) {
                         if (!socket.isClosed()) {
                             StringBuilder response = new StringBuilder();
                             response.append("*2\r\n");
-                            response.append(RESPParser.buildBulkString(result.get(0)));
-                            response.append(RESPParser.buildBulkString(result.get(1)));
+                            response.append(RESPParser.buildBulkString(immediateResult.get(0)));
+                            response.append(RESPParser.buildBulkString(immediateResult.get(1)));
                             writeResponse(output, response.toString());
                         }
                     }

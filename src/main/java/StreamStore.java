@@ -1,5 +1,4 @@
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class StreamStore {
     private final Map<String, List<StreamEntry>> streams = new ConcurrentHashMap<>();
@@ -16,24 +15,11 @@ public class StreamStore {
 
     public String add(String key, String entryId, Map<String, String> fields) {
         List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new ArrayList<>());
-        if (entryId.equals("0-0")) {
-            throw new IllegalArgumentException("The ID specified in XADD must be greater than 0-0");
-        }
-
-        String[] parts = entryId.split("-");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("Invalid ID format");
-        }
         long ms;
-        try {
-            ms = Long.parseLong(parts[0]);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Invalid millisecond time in ID");
-        }
         long seq;
-        boolean autoGenerateSeq = parts[1].equals("*");
 
-        if (autoGenerateSeq) {
+        if (entryId.equals("*")) {
+            ms = System.currentTimeMillis();
             if (stream.isEmpty()) {
                 seq = ms == 0 ? 1 : 0; // Use 1 for ms=0, 0 otherwise
             } else {
@@ -46,19 +32,46 @@ public class StreamStore {
                 }
                 seq = (ms == lastMs) ? lastSeq + 1 : 0;
             }
+        } else if (entryId.equals("0-0")) {
+            throw new IllegalArgumentException("The ID specified in XADD must be greater than 0-0");
         } else {
-            try {
-                seq = Long.parseLong(parts[1]);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Invalid sequence number in ID");
+            String[] parts = entryId.split("-");
+            if (parts.length != 2) {
+                throw new IllegalArgumentException("Invalid ID format");
             }
-            if (!stream.isEmpty()) {
-                StreamEntry lastEntry = stream.get(stream.size() - 1);
-                String[] lastParts = lastEntry.id.split("-");
-                long lastMs = Long.parseLong(lastParts[0]);
-                long lastSeq = Long.parseLong(lastParts[1]);
-                if (ms < lastMs || (ms == lastMs && seq <= lastSeq)) {
-                    throw new IllegalArgumentException("The ID specified in XADD is equal or smaller than the target stream top item");
+            try {
+                ms = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Invalid millisecond time in ID");
+            }
+            boolean autoGenerateSeq = parts[1].equals("*");
+            if (autoGenerateSeq) {
+                if (stream.isEmpty()) {
+                    seq = ms == 0 ? 1 : 0; // Use 1 for ms=0, 0 otherwise
+                } else {
+                    StreamEntry lastEntry = stream.get(stream.size() - 1);
+                    String[] lastParts = lastEntry.id.split("-");
+                    long lastMs = Long.parseLong(lastParts[0]);
+                    long lastSeq = Long.parseLong(lastParts[1]);
+                    if (ms < lastMs) {
+                        throw new IllegalArgumentException("The ID specified in XADD is equal or smaller than the target stream top item");
+                    }
+                    seq = (ms == lastMs) ? lastSeq + 1 : 0;
+                }
+            } else {
+                try {
+                    seq = Long.parseLong(parts[1]);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid sequence number in ID");
+                }
+                if (!stream.isEmpty()) {
+                    StreamEntry lastEntry = stream.get(stream.size() - 1);
+                    String[] lastParts = lastEntry.id.split("-");
+                    long lastMs = Long.parseLong(lastParts[0]);
+                    long lastSeq = Long.parseLong(lastParts[1]);
+                    if (ms < lastMs || (ms == lastMs && seq <= lastSeq)) {
+                        throw new IllegalArgumentException("The ID specified in XADD is equal or smaller than the target stream top item");
+                    }
                 }
             }
         }

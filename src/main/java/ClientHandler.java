@@ -229,36 +229,49 @@ public class ClientHandler {
             long blockMs = Long.parseLong(command.get(2));
             List<String> streamKeys = new ArrayList<>();
             List<String> startIds = new ArrayList<>();
-            streamKeys.add(command.get(4));
-            startIds.add(command.get(5));
+            int streamIndex = 4; // After "XREAD" "block" <timeout> "streams"
+            for (int i = streamIndex; i < command.size() && !command.get(i).equalsIgnoreCase("streams"); i++) {
+                // Skip until "streams"
+            }
+            streamIndex++; // Move to first stream key
+            for (int i = streamIndex; i < command.size(); i++) {
+                streamKeys.add(command.get(i));
+            }
+            for (int i = streamIndex + streamKeys.size(); i < command.size(); i++) {
+                startIds.add(command.get(i));
+            }
             Map<String, List<StreamStore.StreamEntry>> result = streamStore.read(streamKeys, startIds, blockMs);
-            writeResponse(output, formatXreadResponse(result));
+            writeResponse(output, formatXreadResponse(result, streamKeys));
         } else {
             List<String> streamKeys = new ArrayList<>();
             List<String> startIds = new ArrayList<>();
-            if (command.size() >= 6) {
-                streamKeys.add(command.get(2));
-                streamKeys.add(command.get(3));
-                startIds.add(command.get(4));
-                startIds.add(command.get(5));
-            } else {
-                streamKeys.add(command.get(2));
-                startIds.add(command.get(3));
+            int streamIndex = 2; // After "XREAD" "streams"
+            for (int i = streamIndex; i < command.size() && !command.get(i).equalsIgnoreCase("streams"); i++) {
+                // Skip until "streams"
+            }
+            streamIndex++; // Move to first stream key
+            for (int i = streamIndex; i < (command.size() + streamIndex) / 2; i++) {
+                streamKeys.add(command.get(i));
+            }
+            for (int i = (command.size() + streamIndex) / 2; i < command.size(); i++) {
+                startIds.add(command.get(i));
             }
             Map<String, List<StreamStore.StreamEntry>> result = streamStore.read(streamKeys, startIds, 0);
-            writeResponse(output, formatXreadResponse(result));
+            writeResponse(output, formatXreadResponse(result, streamKeys));
         }
     }
 
-    private String formatXreadResponse(Map<String, List<StreamStore.StreamEntry>> result) {
+    private String formatXreadResponse(Map<String, List<StreamStore.StreamEntry>> result, List<String> keys) {
         if (result.isEmpty()) return "*0\r\n";
         StringBuilder response = new StringBuilder();
         response.append("*").append(result.size()).append("\r\n");
-        for (Map.Entry<String, List<StreamStore.StreamEntry>> stream : result.entrySet()) {
+        for (String key : keys) {
+            List<StreamStore.StreamEntry> entries = result.getOrDefault(key, new ArrayList<>());
+            if (entries.isEmpty()) continue; // Skip empty streams
             response.append("*2\r\n");
-            response.append(RESPParser.buildBulkString(stream.getKey()));
-            response.append("*").append(stream.getValue().size()).append("\r\n");
-            for (StreamStore.StreamEntry entry : stream.getValue()) {
+            response.append(RESPParser.buildBulkString(key));
+            response.append("*").append(entries.size()).append("\r\n");
+            for (StreamStore.StreamEntry entry : entries) {
                 response.append("*2\r\n");
                 response.append(RESPParser.buildBulkString(entry.id));
                 response.append("*").append(entry.fields.size() * 2).append("\r\n");

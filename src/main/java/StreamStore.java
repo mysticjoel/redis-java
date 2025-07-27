@@ -102,10 +102,12 @@ public class StreamStore {
     }
 
     public Map<String, List<StreamEntry>> read(List<String> keys, List<String> startIds, long blockMs) {
-        Map<String, List<StreamEntry>> result = new HashMap<>();
+        Map<String, List<StreamEntry>> result = new LinkedHashMap<>(); // Preserve key order
         long deadline = blockMs > 0 ? System.currentTimeMillis() + blockMs : 0;
 
         while (true) {
+            result.clear(); // Clear previous results to avoid stale data
+            boolean hasEntries = false;
             for (int i = 0; i < keys.size(); i++) {
                 String key = keys.get(i);
                 String startId = startIds.get(i);
@@ -118,9 +120,10 @@ public class StreamStore {
                 }
                 if (!entries.isEmpty()) {
                     result.put(key, entries);
+                    hasEntries = true;
                 }
             }
-            if (!result.isEmpty() || blockMs == 0 || System.currentTimeMillis() >= deadline) {
+            if (hasEntries || blockMs == 0 || System.currentTimeMillis() >= deadline) {
                 break;
             }
             try {

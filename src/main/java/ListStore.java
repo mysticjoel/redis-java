@@ -3,7 +3,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class class ListStore {
+public class ListStore {
     private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
     private final Map<String, BlockingQueue<Runnable>> blockedClients = new ConcurrentHashMap<>();
 

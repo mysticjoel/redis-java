@@ -431,12 +431,6 @@ public class ClientHandler {
                                         writeResponse(output, response.toString());
                                     }
                                 }
-                            } else {
-                                synchronized (output) {
-                                    if (!socket.isClosed()) {
-                                        writeResponse(output, "$-1\r\n");
-                                    }
-                                }
                             }
                             if (list.isEmpty()) {
                                 listStore.removeList(command.get(1));
@@ -456,7 +450,7 @@ public class ClientHandler {
                             writeResponse(output, response.toString());
                         }
                     }
-                } else {
+                } else if (timeoutMs == 0) {
                     synchronized (output) {
                         if (!socket.isClosed()) {
                             writeResponse(output, "$-1\r\n");

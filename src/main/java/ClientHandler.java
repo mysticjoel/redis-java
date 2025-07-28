@@ -431,6 +431,12 @@ public class ClientHandler {
                                         writeResponse(output, response.toString());
                                     }
                                 }
+                            } else {
+                                synchronized (output) {
+                                    if (!socket.isClosed()) {
+                                        writeResponse(output, "$-1\r\n");
+                                    }
+                                }
                             }
                             if (list.isEmpty()) {
                                 listStore.removeList(command.get(1));
@@ -448,12 +454,6 @@ public class ClientHandler {
                             response.append(RESPParser.buildBulkString(immediateResult.get(0)));
                             response.append(RESPParser.buildBulkString(immediateResult.get(1)));
                             writeResponse(output, response.toString());
-                        }
-                    }
-                } else {
-                    synchronized (output) {
-                        if (!socket.isClosed()) {
-                            writeResponse(output, "$-1\r\n");
                         }
                     }
                 }

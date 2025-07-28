@@ -450,7 +450,7 @@ public class ClientHandler {
                             writeResponse(output, response.toString());
                         }
                     }
-                } else if (timeoutMs == 0) {
+                } else {
                     synchronized (output) {
                         if (!socket.isClosed()) {
                             writeResponse(output, "$-1\r\n");

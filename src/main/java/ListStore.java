@@ -15,9 +15,10 @@ public class ListStore {
             System.out.println("RPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<Runnable> queue = blockedClients.get(key);
             if (queue != null) {
-                while (!queue.isEmpty()) {
-                    Runnable client = queue.poll();
-                    if (client != null) {
+                List<Runnable> clientsToNotify = new ArrayList<>();
+                queue.drainTo(clientsToNotify);
+                for (Runnable client : clientsToNotify) {
+                    if (!list.isEmpty()) {
                         System.out.println("RPUSH notifying client for key: " + key);
                         client.run();
                     }
@@ -41,9 +42,10 @@ public class ListStore {
             System.out.println("LPUSH key: " + key + ", values: " + values + ", list: " + list);
             BlockingQueue<Runnable> queue = blockedClients.get(key);
             if (queue != null) {
-                while (!queue.isEmpty()) {
-                    Runnable client = queue.poll();
-                    if (client != null) {
+                List<Runnable> clientsToNotify = new ArrayList<>();
+                queue.drainTo(clientsToNotify);
+                for (Runnable client : clientsToNotify) {
+                    if (!list.isEmpty()) {
                         System.out.println("LPUSH notifying client for key: " + key);
                         client.run();
                     }
@@ -123,7 +125,11 @@ public class ListStore {
                         if (queue.isEmpty()) {
                             blockedClients.remove(key);
                         }
-                        return null;
+                        synchronized (list) {
+                            if (list.isEmpty()) {
+                                callback.run();
+                            }
+                        }
                     }
                 } catch (InterruptedException e) {
                     System.out.println("BLPOP timeout interrupted: " + e.getMessage());
@@ -131,7 +137,11 @@ public class ListStore {
                     if (queue.isEmpty()) {
                         blockedClients.remove(key);
                     }
-                    return null;
+                    synchronized (list) {
+                        if (list.isEmpty()) {
+                            callback.run();
+                        }
+                    }
                 }
             }
             return null;

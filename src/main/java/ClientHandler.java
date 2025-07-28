@@ -456,12 +456,6 @@ public class ClientHandler {
                             writeResponse(output, response.toString());
                         }
                     }
-                } else {
-                    synchronized (output) {
-                        if (!socket.isClosed()) {
-                            writeResponse(output, "$-1\r\n");
-                        }
-                    }
                 }
             } catch (IOException e) {
                 System.out.println("BLPOP error: " + e.getMessage() + ", socket closed: " + socket.isClosed());
